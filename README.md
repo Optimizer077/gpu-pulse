@@ -51,7 +51,7 @@ Both read the same kind of data, apply the same insight rules, and record histor
 <table>
 <tr>
 <td width="50%"><img src="docs/images/terminal-overview.png" alt="Overview tab"><br><sub><b>Overview</b>: six live rings, pulse strip, timeline with SM and Tensor lines, true usage, health and diagnosis</sub></td>
-<td width="50%"><img src="docs/images/terminal-diagnosis.png" alt="Diagnosis tab"><br><sub><b>Diagnosis</b>: efficiency score, bottleneck with confidence, evidence, what to try, session energy</sub></td>
+<td width="50%"><img src="docs/images/terminal-diagnosis.png" alt="Diagnosis tab"><br><sub><b>Diagnosis</b>: efficiency score, bottleneck with confidence, evidence, what to try, session energy, and the <b>alerts</b> list (4-GPU demo)</sub></td>
 </tr>
 <tr>
 <td><img src="docs/images/terminal-gpu.png" alt="GPU tab"><br><sub><b>GPU</b>: architecture card, clocks, encoder/decoder, PCIe throughput, per-metric traces, processes</sub></td>
@@ -64,7 +64,7 @@ Both read the same kind of data, apply the same insight rules, and record histor
 ### Multiple GPUs
 
 <img src="docs/images/terminal-multigpu.png" alt="Terminal dashboard with four GPUs">
-<sub><code>gpu-pulse --demo --demo-gpus 4</code>: the ALL GPUS panel flags GPU 1 as a possible straggler (if the GPUs run one job), GPU 2 as thermal-throttling on its own, and GPU 3 on a narrower PCIe link with 92% VRAM.</sub>
+<sub><code>gpu-pulse --demo --demo-gpus 4</code>: the ALL GPUS panel flags GPU 1 as a possible straggler (if the GPUs run one job), GPU 2 as thermal-throttling on its own, and GPU 3 on a narrower PCIe link with 92% VRAM. The header shows the active alert count (GPU 2 running hot).</sub>
 
 ### VS Code extension
 
@@ -75,7 +75,7 @@ Both read the same kind of data, apply the same insight rules, and record histor
 </tr>
 <tr><td colspan="2"><sub>Follows your VS Code theme. Shows live gauges, a timeline with hover readouts, usage windows, a 24-hour heatmap, insights, CPU and memory, processes and machine specs.</sub></td></tr>
 <tr>
-<td width="70%"><img src="docs/images/vscode-multigpu.png" alt="VS Code dashboard with four GPUs"><br><sub><b>All GPUs</b> strip with selectable cards; insights compare the GPUs.</sub></td>
+<td width="70%"><img src="docs/images/vscode-multigpu.png" alt="VS Code dashboard with four GPUs"><br><sub><b>All GPUs</b> strip with selectable cards; insights compare the GPUs; the header badge shows active alerts.</sub></td>
 <td width="30%" valign="top"><img src="docs/images/vscode-sidebar.png" alt="Pinned side-bar view"><br><sub><b>Side bar</b>: pin it next to your editor or chat panel.</sub></td>
 </tr>
 </table>
