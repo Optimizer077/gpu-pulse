@@ -12,6 +12,7 @@ from platformdirs import user_data_dir
 
 from .collectors import AmdLinuxCollector, NvidiaCollector, SystemCollector, collect_specs
 from .collectors.system import SystemExtras
+from .fleet import Fleet, analyze_fleet
 from .history import HistoryFile, HistoryStore
 from .insights import build_insights, grade
 from .intel import Diagnosis, diagnose
@@ -31,6 +32,7 @@ class MonitorConfig:
     history_path: Optional[Path] = None  # None -> platform user data dir
     persist: bool = True  # write history back to disk
     demo: bool = False  # simulated GPU + seeded history; never touches the real history file
+    demo_gpus: int = 1  # number of simulated GPUs in demo mode
 
 
 @dataclass(frozen=True)
@@ -60,7 +62,7 @@ class Monitor:
         if cfg.demo:
             from .demo import demo_history
 
-            self.history.load(demo_history())
+            self.history.load(demo_history(n=cfg.demo_gpus))
         else:
             # Always read existing history; `persist` only controls writing (status/export are read-only).
             self.history.load(self.file.read())
@@ -73,9 +75,9 @@ class Monitor:
 
     def _read_gpus(self) -> tuple[GpuSample, ...]:
         if self.cfg.demo:
-            from .demo import demo_gpu
+            from .demo import demo_gpus
 
-            return (demo_gpu(time.time()),)
+            return demo_gpus(time.time(), self.cfg.demo_gpus)
         try:
             if self.vendor == "nvidia":
                 return self.nvidia.sample()
@@ -118,9 +120,14 @@ class Monitor:
         )
         self.latest = s
         self.history.add(s)
-        if self.vendor == "nvidia" and not self.cfg.demo and s.t - self._last_procs >= 5:
+        if s.t - self._last_procs >= 5:
             self._last_procs = s.t
-            self.processes = self.nvidia.processes()
+            if self.cfg.demo:
+                from .demo import demo_processes
+
+                self.processes = demo_processes(gpus)
+            elif self.vendor == "nvidia":
+                self.processes = self.nvidia.processes()
         if self.cfg.persist and not self.cfg.demo and time.monotonic() - self._last_save >= SAVE_EVERY_S:
             self.save()
         return s
@@ -148,9 +155,9 @@ class Monitor:
         """Static facts per GPU (architecture, cores, bus, limits); cached after the first call."""
         if self._details is None:
             if self.cfg.demo:
-                from .demo import demo_details
+                from .demo import demo_details_all
 
-                self._details = [demo_details()]
+                self._details = demo_details_all(self.cfg.demo_gpus)
             elif self.vendor == "nvidia":
                 try:
                     self._details = self.nvidia.details()
@@ -165,6 +172,12 @@ class Monitor:
         """``intel.diagnose`` with this monitor's temperature threshold and the GPU's static details."""
         det = next((d for d in self.gpu_details() if d.uuid == gpu_uuid), None)
         return diagnose(self.history, gpu_uuid, temp_warn=self.cfg.temp_warn, details=det)
+
+    def fleet(self) -> Fleet:
+        """Cross-GPU comparison (stragglers, uneven VRAM, lone throttling, PCIe links); empty for one GPU."""
+        # The process list (NVML or demo) tells GPUs running one job apart from unrelated ones.
+        procs = self.processes if self.cfg.demo or self.vendor == "nvidia" else None
+        return analyze_fleet(self.history, self.gpu_details(), processes=procs)
 
     def analysis(self, gpu_uuid: Optional[str]) -> Analysis:
         windows = tuple(self.history.stats(label, m, gpu_uuid) for label, m in WINDOWS)

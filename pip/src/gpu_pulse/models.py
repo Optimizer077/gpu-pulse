@@ -48,6 +48,9 @@ class GpuSample:
     fp16_active: Optional[float] = None
     fp64_active: Optional[float] = None
     int_active: Optional[float] = None
+    # Wall-clock time (epoch s) the energy counter was read; it is cached for a few seconds, so it can be
+    # older than the sample. None = read with the sample (or no counter).
+    energy_t: Optional[float] = None
 
     @property
     def vram_pct(self) -> Optional[float]:

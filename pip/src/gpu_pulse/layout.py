@@ -32,27 +32,29 @@ class Layout:
     show_bottom: bool  # Overview usage strip + I/O
     bottom_h: int
     columns: int  # Overview middle: 3 = timeline | true usage + health | diagnosis; 2 = no health column; 1
+    fleet_h: int = 0  # outer height of the ALL GPUS panel (multi-GPU only)
 
     @property
     def show_left(self) -> bool:
         return self.columns >= 2
 
 
-def ring_content_h(width: int, height: int, cols: int, rows: int) -> int:
+def ring_content_h(width: int, height: int, cols: int, rows: int, fleet_h: int = 0) -> int:
     """Largest round-ring content height for a ``cols`` × ``rows`` grid in ``width`` × ``height``."""
-    body = max(1, height - 2)  # header/tab bar + footer
+    body = max(1, height - 2 - fleet_h)  # header/tab bar + footer (+ the ALL GPUS panel)
     content_w = width // cols - CHROME - PAD
     by_width = content_w // 2
     by_height = int(body * RING_SHARE[rows]) // rows - CHROME
     return min(by_width, by_height, RING_MAX)
 
 
-def plan(width: int, height: int) -> Layout:
-    body = max(1, height - 2)
+def plan(width: int, height: int, fleet_h: int = 0) -> Layout:
+    """Panel sizes for a terminal; ``fleet_h`` is the outer height of the ALL GPUS panel (0 = one GPU)."""
+    body = max(1, height - 2 - fleet_h)
     compact = width < 80 or height < 24
     best = (-1, 6, 1)
     for cols, rows in ((6, 1), (3, 2), (2, 3)):
-        h = ring_content_h(width, height, cols, rows)
+        h = ring_content_h(width, height, cols, rows, fleet_h)
         if h > best[0]:
             best = (h, cols, rows)
     h, cols, rows = best
@@ -70,6 +72,7 @@ def plan(width: int, height: int) -> Layout:
     return Layout(
         width=width,
         height=height,
+        fleet_h=fleet_h,
         compact=compact,
         ring_cols=cols,
         ring_rows=rows,

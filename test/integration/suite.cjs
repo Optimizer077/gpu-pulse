@@ -12,8 +12,11 @@ exports.run = async function run() {
   await ext.activate();
   assert.ok(ext.isActive, 'extension activated');
 
+  const api = ext.exports;
+  assert.ok(api && typeof api.sidebarResolved === 'function', 'activate() returns the test API');
+
   const cmds = await vscode.commands.getCommands(true);
-  for (const c of ['gpuPulse.openDashboard', 'gpuPulse.clearHistory', 'gpuPulse.exportHistory']) {
+  for (const c of ['gpuPulse.openDashboard', 'gpuPulse.clearHistory', 'gpuPulse.exportHistory', 'gpuPulse.focusSidebar']) {
     assert.ok(cmds.includes(c), `command ${c} registered`);
   }
 
@@ -28,6 +31,14 @@ exports.run = async function run() {
   await sleep(500);
   const count = vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.label === 'GPU Pulse').length;
   assert.strictEqual(count, 1, 'single dashboard instance');
+
+  // Side bar view: the command reveals it and VS Code resolves the webview view provider.
+  await vscode.commands.executeCommand('gpuPulse.focusSidebar');
+  for (let i = 0; i < 20 && !api.sidebarResolved(); i++) await sleep(250);
+  assert.ok(api.sidebarResolved(), 'side bar webview view resolved');
+  await sleep(1500);
+  console.log(`GPU Pulse integration: sampler vendor=${api.sampler.vendor} mode=${api.sampler.mode} latest=${api.sampler.latest ? 'yes' : 'no'}`);
+  assert.ok(api.sampler.latest, 'sampler produced a sample');
 
   // History is persisted on deactivate; check the storage dir exists after a sample cycle.
   const storage = path.join(ext.extensionPath, '..');

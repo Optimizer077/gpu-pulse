@@ -117,7 +117,9 @@ def score_block(score: Optional[int], verdict: str, width: int, basis: Optional[
     return rows
 
 
-def diagnosis_card(diag: Any, a: Analysis, g: Optional[GpuSample], width: int, height: int) -> Group:
+def diagnosis_card(
+    diag: Any, a: Analysis, g: Optional[GpuSample], width: int, height: int, extra: Sequence[Insight] = ()
+) -> Group:
     """Overview card: fit the most important lines into ``height`` rows, in reading order."""
     score: Optional[int] = getattr(diag, "score", None)
     bottleneck: str = getattr(diag, "bottleneck", "unknown")
@@ -157,7 +159,7 @@ def diagnosis_card(diag: Any, a: Analysis, g: Optional[GpuSample], width: int, h
         t = _line(" → ", R.LEVEL_COLOR["good"], True)
         t.append(act, Style(color=R.INK))
         items.append((4 + 2 * k, 10 + k, [t]))
-    tops = merged_insights(a, diag)[:4]
+    tops = merged_insights(a, diag, extra)[:4]
     if tops:
         items.append((9, 30, [_line("INSIGHTS", R.MUTED, True)]))
         for k, ins in enumerate(tops):
@@ -386,11 +388,12 @@ def health_grid(rows: Sequence[HealthRow], width: int, detail: bool = True, colu
 
 
 # ---- insights ------------------------------------------------------------------------------
-def merged_insights(a: Analysis, diag: Any) -> list[Insight]:
+def merged_insights(a: Analysis, diag: Any, extra: Sequence[Insight] = ()) -> list[Insight]:
+    """Engine findings, ``extra`` (cross-GPU) findings and rule insights, deduplicated, worst first."""
     order = {"critical": 0, "serious": 1, "warning": 2, "info": 3, "good": 4}
     seen: set[str] = set()
     out: list[Insight] = []
-    for i in list(getattr(diag, "findings", ()) or ()) + list(a.insights):
+    for i in list(extra) + list(getattr(diag, "findings", ()) or ()) + list(a.insights):
         key = i.title.lower()
         if key not in seen:
             seen.add(key)

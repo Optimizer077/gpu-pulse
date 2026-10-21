@@ -1,9 +1,9 @@
-"""Braille-dot graphics for the animated dashboard: ring gauges and an ECG-style pulse strip.
+"""Braille-dot graphics for the animated dashboard: ring geometry, traces and the pulse wave.
 
 Each terminal cell holds a 2×4 grid of braille dots, so a cell is drawn at sub-character
 resolution. With the usual 1:2 cell aspect ratio the dots are square, which is what lets
-the ring gauges come out round. Geometry is precomputed per size, so a frame only does
-per-cell bit masking.
+the ring gauges come out round. Geometry is precomputed per size; the per-frame drawing of
+rings and the pulse strip lives in :mod:`gpu_pulse.strips`.
 """
 
 from __future__ import annotations
@@ -21,12 +21,12 @@ from . import render as R
 
 # Braille bit for dot (x in 0..1, y in 0..3) inside one cell.
 _BITS = ((0x01, 0x02, 0x04, 0x40), (0x08, 0x10, 0x20, 0x80))
+BRAILLE_BITS = _BITS
 START_DEG, SWEEP_DEG = 135.0, 270.0  # gauge opens at the bottom, like the VS Code version
 
 
-@lru_cache(maxsize=4096)
 def _style(color: str, bold: bool = False) -> Style:
-    return Style(color=color, bold=bold)
+    return R.style(color, bold)
 
 
 # ---- big digits (3 rows) for the gauge centre --------------------------------------------
@@ -148,98 +148,6 @@ def ring_geometry(width: int, height: int) -> RingGeometry:
     )
 
 
-def ring(
-    width: int,
-    height: int,
-    frac: float,
-    color: str,
-    glow: str,
-    shimmer: Optional[float] = None,
-    lines: tuple[tuple[str, str, bool], ...] = (),
-    marker: Optional[float] = None,
-    top: Optional[int] = None,
-) -> Text:
-    """Draw a 270° ring gauge filled to ``frac`` with centred text ``lines`` of (text, colour, bold).
-
-    ``shimmer`` (0..1) is the position of a highlight that travels along the filled arc;
-    ``marker`` (0..1) places a ◆ on the tick ring (e.g. the 1-hour average); ``top`` is the
-    row of the first text line (default: block centred on the ring centre).
-    """
-    g = ring_geometry(width, height)
-    frac = max(0.0, min(1.0, frac))
-    if top is None:
-        top = g.center_row - len(lines) // 2
-    overlay: dict[int, tuple[int, str, str, bool]] = {}
-    for i, (s, c, b) in enumerate(lines):
-        s = s[: max(1, width)]
-        overlay[top + i] = ((width - len(s)) // 2, s, c, b)
-    mark = g.marker_cell(marker) if marker is not None else None
-    out = Text(no_wrap=True, overflow="crop")
-    for y, row in enumerate(g.cells):
-        ov = overlay.get(y)
-        x = 0
-        while x < width:
-            if ov and ov[0] <= x < ov[0] + len(ov[1]):
-                out.append(ov[1], _style(ov[2], ov[3]))
-                x += len(ov[1])
-                continue
-            cell = row[x]
-            x += 1
-            if mark == (y, x - 1):
-                out.append("◆", _style(R.INK, True))
-                continue
-            if cell is None:
-                out.append(" ")
-                continue
-            lit = 0
-            for bit, t in cell.ring:
-                if t <= frac:
-                    lit |= bit
-            tick_bits = 0
-            tick_lit = False
-            for bit, t in cell.ticks:
-                tick_bits |= bit
-                tick_lit = tick_lit or t <= frac
-            if lit:
-                c = R.mix(color, glow, cell.t)
-                if frac - 0.025 <= cell.t <= frac + 0.01:  # bright head at the arc's tip
-                    c = R.mix(glow, "#ffffff", 0.65)
-                elif shimmer is not None and abs(cell.t - shimmer) < 0.05 and cell.t <= frac:
-                    c = R.mix(c, "#ffffff", 0.55 * (1 - abs(cell.t - shimmer) / 0.05))
-                out.append(chr(0x2800 | lit | tick_bits), _style(c))
-            elif cell.ring:
-                out.append(chr(0x2800 | sum({b for b, _ in cell.ring}) | tick_bits), _style(R.TRACK))
-            else:
-                out.append(chr(0x2800 | tick_bits), _style(glow if tick_lit else "#3a4250"))
-        if y < len(g.cells) - 1:
-            out.append("\n")
-    return out
-
-
-def beside(left: Text, right: tuple[Text, ...], gap: int = 2, width: int = 0) -> Text:
-    """Place ``right`` lines next to ``left`` (a multi-line Text), vertically centred.
-
-    Every output row is padded/cropped to ``width`` cells when given, so it never wraps.
-    """
-    rows = left.split("\n", allow_blank=True)
-    top = max(0, (len(rows) - len(right)) // 2)
-    out = Text(no_wrap=True, overflow="crop")
-    lw = max((r.cell_len for r in rows), default=0)
-    for i, row in enumerate(rows):
-        line = row.copy()
-        line.pad_right(lw - line.cell_len)
-        j = i - top
-        if 0 <= j < len(right):
-            line.append(" " * gap)
-            line.append_text(right[j])
-        if width:
-            line.truncate(width, overflow="crop", pad=True)
-        out.append_text(line)
-        if i < len(rows) - 1:
-            out.append("\n")
-    return out
-
-
 # ---- braille area trace (I/O, CPU history) -------------------------------------------------
 def trace(
     values: list[Optional[float]],
@@ -271,11 +179,14 @@ def trace(
     out = Text(no_wrap=True, overflow="crop")
     for r, row in enumerate(grid):
         shade = R.mix(color, glow, 1 - r / max(1, height - 1)) if height > 1 else glow
-        for bits in row:
-            out.append(chr(0x2800 | bits) if bits else " ", _style(shade))
+        out.append(_braille_row(row), _style(shade))  # one span per row
         if r < height - 1:
             out.append("\n")
     return out
+
+
+def _braille_row(row: list[int]) -> str:
+    return "".join(chr(0x2800 | bits) if bits else " " for bits in row)
 
 
 def mirror(
@@ -309,8 +220,7 @@ def mirror(
         else:
             k = r - top_h
             c = R.mix(down_colors[0], down_colors[1], 1 - k / max(1, height - top_h - 1) if height - top_h > 1 else 1)
-        for bits in row:
-            out.append(chr(0x2800 | bits) if bits else " ", _style(c))
+        out.append(_braille_row(row), _style(c))
         if r < height - 1:
             out.append("\n")
     return out
@@ -352,36 +262,3 @@ class PulseWave:
             amp = 0.18 + 0.82 * self.level
             self.pos = (self.pos + 1) % beat_len
             self.ys.append(self._beat_value(self.pos / beat_len, amp))
-
-
-def pulse(wave: PulseWave, width: int, height: int, color: str, glow: str) -> Text:
-    """Render the trace with a fading trail (left = old/dim, right = new/bright)."""
-    dw, dh = width * 2, height * 4
-    wave.resize(dw)
-    base = dh * 0.68
-    scale = dh * 0.62
-    grid = [[0] * width for _ in range(height)]
-    prev: Optional[int] = None
-    for x, v in enumerate(wave.ys):
-        y = int(round(base - v * scale))
-        y = max(0, min(dh - 1, y))
-        lo, hi = (y, y) if prev is None else (min(prev, y), max(prev, y))
-        for yy in range(lo, hi + 1):  # vertical connection keeps the line continuous
-            grid[yy // 4][x // 2] |= _BITS[x % 2][yy % 4]
-        prev = y
-    out = Text(no_wrap=True, overflow="crop")
-    for row_i, row in enumerate(grid):
-        for x, bits in enumerate(row):
-            if not bits:
-                out.append(" ")
-                continue
-            age = x / max(1, width - 1)
-            c = R.mix(R.TRACK, color, min(1.0, age * 1.6))
-            if age > 0.6:
-                c = R.mix(color, glow, (age - 0.6) / 0.4)
-            if x >= width - 2:
-                c = R.mix(glow, "#ffffff", 0.6)
-            out.append(chr(0x2800 | bits), _style(c))
-        if row_i < height - 1:
-            out.append("\n")
-    return out

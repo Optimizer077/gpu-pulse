@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from typing import Optional
 
 from rich import box
@@ -13,6 +14,7 @@ from rich.table import Table
 from rich.text import Text
 
 from . import render as R
+from .fleet import aggregate
 from .models import GpuSample, Sample, WindowStats
 from .monitor import Analysis, Monitor
 
@@ -60,6 +62,23 @@ def gpu_block(g: GpuSample, hour: Optional[WindowStats], bw: int) -> Group:
     return Group(head, grid)
 
 
+def aggregate_line(gpus: Sequence[GpuSample]) -> Text:
+    """``All 4 GPUs  avg 71% · VRAM 41.2/64.0 GB · 512/720 W · hottest GPU 2 86°C · throttling: GPU 2``."""
+    agg = aggregate(gpus)
+    t = Text(f"All {agg.count} GPUs  ", Style(color=R.MUTED))
+    t.append(f"avg {R.fmt(agg.util_mean)}%", Style(color=R.GPU_GLOW, bold=True))
+    t.append(f" · VRAM {agg.vram_used_gib:.1f}/{agg.vram_total_gib:.1f} GB", Style(color=R.INK))
+    if agg.power_w is not None:
+        cap = f"/{agg.power_limit_w:.0f}" if agg.power_limit_w else ""
+        t.append(f" · {agg.power_w:.0f}{cap} W", Style(color=R.INK))
+    if agg.hottest is not None:
+        t.append(f" · hottest GPU {agg.hottest[0]} {agg.hottest[1]:.0f}°C", Style(color=R.INK))
+    if agg.throttled:
+        names = ", ".join(f"GPU {i}" for i in agg.throttled)
+        t.append(f" · clock-limited: {names}", Style(color=R.WARN_GLOW))
+    return t
+
+
 def windows_table(windows: tuple[WindowStats, ...]) -> Table:
     t = Table(box=box.SIMPLE_HEAD, header_style=Style(color=R.MUTED), pad_edge=False)
     for col in ("Window", "GPU avg", "Peak", "Idle", "Busy", "Held idle", "CPU/RAM", "Recorded"):
@@ -104,7 +123,10 @@ def run_status(mon: Monitor, console: Optional[Console] = None) -> None:
 
     parts: list = []
     for g in s.gpus:
-        parts += [gpu_block(g, a.windows[2] if g.uuid == first else None, bw), Text()]
+        hour = a.windows[2] if g.uuid == first else mon.history.stats("1 hour", 60, g.uuid)
+        parts += [gpu_block(g, hour, bw), Text()]
+    if len(s.gpus) > 1:
+        parts += [aggregate_line(s.gpus), Text()]
     if not s.gpus:
         parts.append(Text("No supported GPU detected (NVIDIA via NVML, or AMD amdgpu on Linux).", Style(color=R.MUTED)))
     cpu_ram = Table.grid(padding=(0, 2))
@@ -126,6 +148,8 @@ def run_status(mon: Monitor, console: Optional[Console] = None) -> None:
         verdict = Text("Last hour: ", Style(color=R.MUTED))
         verdict.append(f"● {a.grade[0]}", Style(color=R.GRADE_COLOR[a.grade[1]], bold=True))
         parts.append(verdict)
+    if len(s.gpus) > 1:
+        parts.append(Text(f"Usage windows and insights below: GPU {s.gpus[0].index}", Style(color=R.MUTED)))
     parts.append(windows_table(a.windows))
     _, cells = mon.history.heatmap(first, hours=1)
     spark = Text("Last 60 min  ", Style(color=R.MUTED))

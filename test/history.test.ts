@@ -105,7 +105,23 @@ describe('HistoryStore', () => {
   it('ignores malformed buckets on load', () => {
     const h = new HistoryStore(7);
     h.load({ version: 1, minutes: [{ t: T0 }, null, { t: T0 + 60_000, n: 1, cpu: 1, mem: 1, gpus: {} }] });
-    expect(h.stats('1h', 60, 'G', T0 + 2 * 60_000).coveredMinutes).toBe(1);
+    // The valid bucket counts as a recorded minute overall, but not for a GPU it has no data for.
+    expect(h.stats('1h', 60, undefined, T0 + 2 * 60_000).coveredMinutes).toBe(1);
+    expect(h.stats('1h', 60, 'G', T0 + 2 * 60_000).coveredMinutes).toBe(0);
+  });
+
+  it('counts coverage per GPU (a GPU back from a reset does not borrow its siblings\' minutes)', () => {
+    const h = new HistoryStore(7);
+    const two = (t: number, withB: boolean): Sample => ({
+      t,
+      gpus: withB ? [gpu(50), { ...gpu(10), uuid: 'B', index: 1 }] : [gpu(50)],
+      cpu: { util: 1, perCore: [1] },
+      mem: { usedBytes: 1, totalBytes: 2 },
+    });
+    for (let m = 0; m < 10; m++) h.add(two(T0 + m * 60_000, m === 9)); // B only in the last minute
+    h.add(two(T0 + 10 * 60_000 + 1000, false)); // close minute 9
+    expect(h.stats('10m', 10, 'G', T0 + 9 * 60_000).coveredMinutes).toBe(10);
+    expect(h.stats('10m', 10, 'B', T0 + 9 * 60_000).coveredMinutes).toBe(1);
   });
 
   it('builds a heatmap with nulls for unrecorded minutes', () => {

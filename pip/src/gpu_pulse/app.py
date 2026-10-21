@@ -22,22 +22,30 @@ from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import Binding
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.widgets import ContentSwitcher, Footer, Static
+from textual.screen import Screen
+from textual.timer import Timer
+from textual.widgets import ContentSwitcher, Footer
 
 from . import pages
 from . import panels as P
 from . import render as R
+from .fleet import Fleet
+from .fleetview import Hit, fleet_lines
 from .intel import Diagnosis
 from .layout import Layout, plan
 from .models import GpuSample, Sample, Specs
 from .monitor import Analysis, Monitor
 from .screens import HelpScreen
-from .widgets import Panel, PulseStrip, RingGauge
+from .widgets import Panel, PulseStrip, QuietStatic, RingGauge
 
 logger = logging.getLogger(__name__)
 
 RANGES = (60, 300, 900, 3600)
 SLOW_PANELS_S = 2.0  # windows / heatmap / processes / diagnosis change slowly
+HISTORY_SLOW_S = 5.0  # the History tab shows per-minute data: redraw its heatmap less often
+GPU_PREFIX_S = 1.5  # `g` then a digit within this time jumps to that GPU
+SHIMMER_EVERY_S = 9.0  # at most one highlight pass along the rings every 9 s ...
+SHIMMER_SPEED = 0.45  # ... travelling 45% of the sweep per second (a pass takes ~2.2 s)
 TABS = (
     ("overview", "Overview"),
     ("gpu", "GPU"),
@@ -47,7 +55,7 @@ TABS = (
 )
 
 
-class TabBar(Static):
+class TabBar(QuietStatic):
     """Header row: brand, numbered tabs (clickable) and live status on the right."""
 
     DEFAULT_CSS = "TabBar { height: 1; background: #0d1117; }"
@@ -62,6 +70,36 @@ class TabBar(Static):
                 self.app.action_show_tab(tab)  # type: ignore[attr-defined]
 
 
+class FleetPanel(Panel):
+    """The ALL GPUS panel; clicking a GPU's line selects it."""
+
+    def __init__(self, title: str, **kw: Any) -> None:
+        super().__init__(title, **kw)
+        self.hits: list[Hit] = []
+
+    def on_click(self, event: events.Click) -> None:
+        off = event.get_content_offset(self)
+        if off is None:
+            return
+        for hit in self.hits:
+            if hit.line == off.y and hit.x0 <= off.x < hit.x1:
+                self.app.select_gpu(hit.pos)  # type: ignore[attr-defined]
+                return
+
+
+class MainScreen(Screen[None]):
+    """The dashboard's base screen (the pages live on it; Help is pushed on top)."""
+
+    def on_screen_resume(self) -> None:
+        # Back from the help overlay: restart the animation now, not at the next sample.
+        self.app.wake()  # type: ignore[attr-defined]
+
+    def on_key(self, event: events.Key) -> None:
+        # Runs before the app's bindings: any key but `g` or a digit ends the "g then digit" prefix.
+        if event.key != "g" and not event.key.isdigit():
+            self.app.end_gpu_prefix()  # type: ignore[attr-defined]
+
+
 class GpuDashboard(App[None]):
     TITLE = "GPU Pulse"
     CSS = """
@@ -70,6 +108,7 @@ class GpuDashboard(App[None]):
     ContentSwitcher > VerticalScroll { height: 1fr; scrollbar-size-vertical: 1; }
     #rings { grid-size: 6 1; grid-gutter: 0; height: auto; grid-rows: 13; }
     #ov-arch { height: 1; padding: 0 2; }
+    #fleet { height: 6; }
     #ov-mid { height: 22; }
     #ov-left { width: 3fr; }
     #ov-center { width: 2fr; }
@@ -97,19 +136,22 @@ class GpuDashboard(App[None]):
     BINDINGS = [
         Binding("question_mark", "help", "Help", key_display="?"),
         Binding("g", "next_gpu", "Next GPU"),
+        Binding("G,shift+g", "next_gpu(-1)", "Prev GPU", show=False),
         Binding("r", "next_range", "Range"),
         Binding("e", "export", "Export CSV"),
         Binding("q", "quit", "Quit"),
-        *[Binding(str(i + 1), f"show_tab('{tab}')", label, show=False) for i, (tab, label) in enumerate(TABS)],
+        *[Binding(str(d), f"digit({d})", "", show=False) for d in range(10)],
         Binding("right,right_square_bracket", "cycle_tab(1)", "Next tab", show=False),
         Binding("left,left_square_bracket", "cycle_tab(-1)", "Prev tab", show=False),
     ]
 
-    def __init__(self, monitor: Monitor, fps: float = 20.0) -> None:
+    def __init__(self, monitor: Monitor, fps: float = 12.0) -> None:
         super().__init__()
         self.mon = monitor
         self.fps = max(0.0, min(60.0, fps))
-        self.gpu_idx = 0
+        self.gpu_idx = 0  # position of the shown GPU in the latest sample (resolved from gpu_uuid every sample)
+        self.gpu_uuid: Optional[str] = None  # the selected GPU; survives other GPUs dropping out
+        self._shown_uuid: Optional[str] = None  # GPU the per-GPU panels were last built for
         self.range_i = 1
         self.tab = "overview"
         self.specs: Optional[Specs] = None
@@ -122,6 +164,23 @@ class GpuDashboard(App[None]):
         self._last_frame = time.monotonic()
         self.gauges: list[RingGauge] = []
         self._rerender_pending = False
+        self._t0 = time.monotonic()
+        self._frame_timer: Optional[Timer] = None
+        self._wake_timer: Optional[Timer] = None
+        self.frames_paused = False
+        self.frames = 0  # frame callbacks run (cost accounting for tests and benchmarks)
+        self._shimmer_cycle = -1
+        self._shimmer_on = True
+        self.n_gpus = 0  # GPUs in the latest sample; the ALL GPUS panel appears for more than one
+        self.fleet_lines = 0
+        self.fleet_width = 116  # content width the ALL GPUS panel is planned and drawn at
+        self.fleet: Optional[Fleet] = None
+        self._gpu_prefix_until = 0.0  # after `g`, digits select that GPU index instead of a tab
+        self._gpu_digits = ""  # digits typed since `g` (two for GPU 10+)
+        self._shimmer_mask: list[bool] = []  # per gauge: its value moved enough to earn the current pass
+
+    def get_default_screen(self) -> Screen:
+        return MainScreen(id="_default")
 
     # ---- composition ----
     def compose(self) -> ComposeResult:
@@ -135,7 +194,8 @@ class GpuDashboard(App[None]):
                     yield RingGauge("POWER", R.POWER, R.POWER_GLOW, unit="W", id="ring-power")
                     yield RingGauge("CPU", R.CPU, R.CPU_GLOW, id="ring-cpu")
                     yield RingGauge("RAM", R.RAM, R.RAM_GLOW, id="ring-ram")
-                yield Static(id="ov-arch")
+                yield QuietStatic(id="ov-arch")
+                yield FleetPanel("ALL GPUS · g / G or click to select", id="fleet")
                 with Horizontal(id="ov-mid"):
                     with Vertical(id="ov-left"):
                         yield PulseStrip(id="pulse")
@@ -185,7 +245,7 @@ class GpuDashboard(App[None]):
         self.gauges = list(self.query(RingGauge))
         self.pulse = self.query_one(PulseStrip)
         if self.fps:
-            self.set_interval(1 / self.fps, self._frame)
+            self._frame_timer = self.set_interval(1 / self.fps, self._frame)
         else:  # --fps 0: values snap, no shimmer; the pulse still advances once per sample
             for gauge in self.gauges:
                 gauge.animate_motion = False
@@ -199,9 +259,29 @@ class GpuDashboard(App[None]):
             return
         self._apply_layout()
 
-    def _apply_layout(self) -> None:
+    def _overview_scrollbar(self) -> bool:
+        try:
+            return bool(self.query_one("#overview", VerticalScroll).show_vertical_scrollbar)
+        except NoMatches:
+            return False
+
+    def fit_fleet(self, width: int) -> None:
+        """Re-plan the ALL GPUS panel at its real content width (the Overview's scrollbar came or went)."""
+        if width != self.fleet_width:
+            self._apply_layout(width)
+
+    def _apply_layout(self, fleet_width: Optional[int] = None) -> None:
         w, h = self.size.width or 120, self.size.height or 40
-        L = self.layout_plan = plan(w, h)
+        # Panel content width = width - border - padding (- the Overview's scrollbar while it shows).
+        # pages.live checks it against the panel's real width and calls fit_fleet when they disagree.
+        self.fleet_width = fleet_width or max(20, w - 4 - (1 if self._overview_scrollbar() else 0))
+        self.fleet_lines = fleet_lines(self.n_gpus, self.fleet_width, h)
+        fleet_h = self.fleet_lines + 3 if self.fleet_lines else 0
+        L = self.layout_plan = plan(w, h, fleet_h)
+        fleet_panel = self.query_one("#fleet")
+        fleet_panel.display = fleet_h > 0
+        if fleet_h:
+            fleet_panel.styles.height = fleet_h
         rings = self.query_one("#rings", Grid)
         rings.styles.grid_size_columns = L.ring_cols
         rings.styles.grid_size_rows = L.ring_rows
@@ -237,6 +317,7 @@ class GpuDashboard(App[None]):
         self.query_one("#heat").styles.width = heat_w if w >= 74 else "1fr"
         self._show("#heat", w >= 74)
         self.query_one("#heat-row").styles.layout = "vertical" if w < heat_w + 34 else "horizontal"
+        self.wake()
 
     def request_rerender(self) -> None:
         """Debounced full redraw of the visible page after panels change size."""
@@ -251,15 +332,69 @@ class GpuDashboard(App[None]):
     def _show(self, selector: str, on: bool) -> None:
         self.query_one(selector).display = on
 
+    # ---- animation clock ----
+    def _shimmer_at(self, now: float) -> Optional[float]:
+        """Position (0..1) of the shimmer pass, or None between passes.
+
+        A pass runs at most every SHIMMER_EVERY_S and only on rings whose shown value moved
+        noticeably since their last pass (``_shimmer_mask``): a frozen or jittering reading
+        (idle machine, stalled job, CPU wobbling by a percent) leaves the rings still.
+        """
+        cycle = int((now - self._t0) // SHIMMER_EVERY_S)
+        if cycle != self._shimmer_cycle:
+            self._shimmer_cycle = cycle
+            self._shimmer_mask = [g.consume_change() for g in self.gauges]  # every flag, no short-circuit
+            self._shimmer_on = any(self._shimmer_mask)
+        pos = ((now - self._t0) % SHIMMER_EVERY_S) * SHIMMER_SPEED
+        return pos if self._shimmer_on and pos <= 1.0 else None
+
+    def _animating_here(self) -> bool:
+        return (
+            bool(self.fps)
+            and self.tab == "overview"
+            and bool(self.screen_stack)
+            and (self.screen is self.screen_stack[0])
+        )
+
+    def wake(self) -> None:
+        """Restart the frame timer (new sample, tab switch, resize, shimmer due)."""
+        timer = self._frame_timer
+        if timer is None or not self.frames_paused or not self._animating_here():
+            return
+        self.frames_paused = False
+        self._last_frame = time.monotonic()
+        timer.resume()
+
+    def _sleep(self, now: float) -> None:
+        """Nothing is moving: stop frames until the next sample or shimmer pass."""
+        if self._frame_timer is None or self.frames_paused:
+            return
+        self.frames_paused = True
+        self._frame_timer.pause()
+        if self._wake_timer is not None:
+            self._wake_timer.stop()
+        due = SHIMMER_EVERY_S - (now - self._t0) % SHIMMER_EVERY_S
+        self._wake_timer = self.set_timer(due + 0.01, self.wake)
+
     def _frame(self) -> None:
         now = time.monotonic()
-        dt, self._last_frame = min(0.25, now - self._last_frame), now
-        if self._shutting_down() or self.tab != "overview" or self.screen is not self.screen_stack[0]:
+        self.frames += 1
+        if self._shutting_down():
             return
-        for gauge in self.gauges:
-            gauge.step(dt)
-        if self.layout_plan.show_pulse:
+        if not self._animating_here():
+            self._sleep(now)
+            return
+        dt, self._last_frame = min(0.25, now - self._last_frame), now
+        shimmer = self._shimmer_at(now)
+        moving = shimmer is not None
+        mask = self._shimmer_mask
+        for i, gauge in enumerate(self.gauges):
+            moving = gauge.step(dt, shimmer if i < len(mask) and mask[i] else None) or moving
+        if self.layout_plan.show_pulse and self.pulse.display:
             self.pulse.step(dt)
+            moving = True
+        if not moving:
+            self._sleep(now)
 
     def _load_specs(self) -> None:
         # psutil / NVML probes can fail in restricted containers; never let that close the dashboard.
@@ -305,6 +440,7 @@ class GpuDashboard(App[None]):
 
     # ---- actions ----
     def action_show_tab(self, tab: str) -> None:
+        self.end_gpu_prefix()
         if tab == self.tab:
             return
         self.tab = tab
@@ -318,10 +454,55 @@ class GpuDashboard(App[None]):
     def action_help(self) -> None:
         self.push_screen(HelpScreen())
 
-    def action_next_gpu(self) -> None:
-        n = len(self.mon.latest.gpus) if self.mon.latest else 0
-        self.gpu_idx = (self.gpu_idx + 1) % max(1, n)
+    def end_gpu_prefix(self) -> None:
+        """Forget a pending ``g``: the next digit switches tabs again."""
+        self._gpu_prefix_until = 0.0
+        self._gpu_digits = ""
+
+    def action_next_gpu(self, step: int = 1) -> None:
+        """``g`` / ``G``: next / previous GPU. For ~1.5 s after ``g``, digits select GPU <digits>."""
+        s = self.mon.latest
+        n = len(s.gpus) if s else 0
+        self.end_gpu_prefix()
+        if step > 0 and n > 1:
+            self._gpu_prefix_until = time.monotonic() + GPU_PREFIX_S
+        pos = self._resolve(s) if s else self.gpu_idx
+        self.select_gpu((pos + step) % max(1, n))
+
+    def select_gpu(self, pos: int) -> None:
+        """Show GPU at position ``pos`` of the latest sample on every per-GPU panel (remembered by uuid)."""
+        gpus = self.mon.latest.gpus if self.mon.latest else ()
+        pos = max(0, min(pos, len(gpus) - 1)) if gpus else 0
+        uuid = gpus[pos].uuid if gpus else None
+        if pos == self.gpu_idx and uuid == self.gpu_uuid and self.analysis is not None:
+            return
+        self.gpu_idx, self.gpu_uuid = pos, uuid
         self.refresh_data(sample=False, slow=True)
+
+    def action_digit(self, d: int) -> None:
+        """1-5 switch tabs; right after ``g`` digits pick the GPU with that NVML index instead.
+
+        While the prefix is active every digit is taken as part of a GPU index (never a tab): a
+        second digit within the window extends it (``g 1 2`` → GPU 12 on machines with 10+ GPUs).
+        """
+        gpus = self.mon.latest.gpus if self.mon.latest else ()
+        if time.monotonic() < self._gpu_prefix_until and len(gpus) > 1:
+            digits = self._gpu_digits + str(d)
+            indices = [str(g.index) for g in gpus]
+            longer = any(i != digits and i.startswith(digits) for i in indices)
+            if longer:  # e.g. "1" on a 12-GPU machine: GPU 1 now, GPU 1x if another digit follows
+                self._gpu_digits = digits
+                self._gpu_prefix_until = time.monotonic() + GPU_PREFIX_S
+            else:
+                self.end_gpu_prefix()
+            pos = next((i for i, g in enumerate(gpus) if str(g.index) == digits), None)
+            if pos is not None:
+                self.select_gpu(pos)
+            elif not longer:
+                self.notify(f"No GPU {digits} on this machine", severity="warning", timeout=2)
+            return
+        if 1 <= d <= len(TABS):
+            self.action_show_tab(TABS[d - 1][0])
 
     def action_next_range(self) -> None:
         self.range_i = (self.range_i + 1) % len(RANGES)
@@ -339,6 +520,13 @@ class GpuDashboard(App[None]):
         self.notify("Export failed: no writable folder (tried current and home directory)", severity="error")
 
     # ---- refresh ----
+    def _resolve(self, s: Sample) -> int:
+        """Position of the selected GPU in ``s``: found by uuid; only if it is gone, the old position clamped."""
+        pos = next((i for i, g in enumerate(s.gpus) if g.uuid == self.gpu_uuid), None)
+        if pos is None:  # first sample, or the selected GPU dropped out (driver reset)
+            pos = max(0, min(self.gpu_idx, len(s.gpus) - 1))
+        return pos
+
     def _gpu(self, s: Sample) -> Optional[GpuSample]:
         return s.gpus[self.gpu_idx] if self.gpu_idx < len(s.gpus) else (s.gpus[0] if s.gpus else None)
 
@@ -366,9 +554,20 @@ class GpuDashboard(App[None]):
         s = self.mon.tick() if sample else self.mon.latest
         if s is None:
             return
+        if len(s.gpus) != self.n_gpus:  # first sample, or a GPU appeared / dropped out
+            self.n_gpus = len(s.gpus)
+            self._apply_layout()
+            slow = True
+        self.gpu_idx = self._resolve(s)
         g = self._gpu(s)
+        if g is not None and g.uuid != self._shown_uuid:  # a different physical GPU: rebuild its panels
+            self._shown_uuid = g.uuid
+            slow = True
+        if self.gpu_uuid is None and g is not None:
+            self.gpu_uuid = g.uuid
         now = time.monotonic()
-        if slow or self.analysis is None or now - self._last_slow >= SLOW_PANELS_S:
+        period = HISTORY_SLOW_S if self.tab == "history" else SLOW_PANELS_S
+        if slow or self.analysis is None or now - self._last_slow >= period:
             self._last_slow = now
             self._slow(s, g)
         a = self.analysis
@@ -378,6 +577,7 @@ class GpuDashboard(App[None]):
         pages.live(self, s, g, a)
         if not self.fps and self.tab == "overview":
             self.pulse.step(self.mon.cfg.interval_s)
+        self.wake()
 
     def _slow(self, s: Sample, g: Optional[GpuSample]) -> None:
         uid = g.uuid if g else None
@@ -389,6 +589,7 @@ class GpuDashboard(App[None]):
                 logger.warning("diagnose() failed: %s", e)
             self._diag_failed = True
             self.diag = Diagnosis()
+        self.fleet = self.mon.fleet() if len(s.gpus) > 1 else None
         pages.slow(self, s, g, self.analysis)
 
     def _header(self, s: Sample, g: Optional[GpuSample]) -> None:
@@ -413,8 +614,9 @@ class GpuDashboard(App[None]):
         if self.mon.cfg.demo:
             right.append(" DEMO ", Style(color=R.BG, bgcolor="#fab219", bold=True))
             right.append(" ")
-        if len(s.gpus) > 1 and g:
-            right.append(f"GPU {g.index + 1}/{len(s.gpus)} ", Style(color=R.INK))
+        if len(s.gpus) > 1 and g:  # NVML index (as nvidia-smi / CUDA show it), then position
+            right.append(f"GPU {g.index} ", Style(color=R.INK, bold=True))
+            right.append(f"{min(self.gpu_idx, len(s.gpus) - 1) + 1}/{len(s.gpus)} ", Style(color=R.MUTED))
         if self.specs and width >= 150:
             right.append(f"{self.specs.hostname} · ", Style(color=R.MUTED))
         right.append("● ", Style(color=R.LEVEL_COLOR["good"]))

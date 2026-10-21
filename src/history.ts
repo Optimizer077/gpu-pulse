@@ -37,6 +37,33 @@ export interface SerializedHistory {
 /** A compact point for the live chart: [t, gpuUtil, vram%, cpu%, ram%]. */
 export type RecentPoint = [number, number | null, number | null, number, number];
 
+/**
+ * One raw sample reduced to what the live chart needs. At 250 ms an hour is 14 400
+ * entries, so full Sample objects (per-core arrays, names, clocks) are not kept.
+ * `ids` is shared between consecutive entries while the GPU set is unchanged.
+ */
+interface RecentEntry {
+  t: number;
+  cpu: number;
+  ram: number;
+  ids: string[];
+  util: (number | null)[];
+  vram: (number | null)[];
+}
+
+const r1 = (x: number) => Math.round(x * 10) / 10;
+
+function ramPct(s: Sample): number {
+  return s.mem.totalBytes ? r1((s.mem.usedBytes / s.mem.totalBytes) * 100) : 0;
+}
+
+/** Live-chart point for one GPU of a sample (falls back to the first GPU). */
+export function toPoint(s: Sample, gpuUuid: string | undefined): RecentPoint {
+  const g = s.gpus.find((x) => x.uuid === gpuUuid) ?? s.gpus[0];
+  const v = g ? vramPct(g.memUsedMiB, g.memTotalMiB) : null;
+  return [s.t, g?.util ?? null, v === null ? null : r1(v), r1(s.cpu.util), ramPct(s)];
+}
+
 export function minuteStart(t: number): number {
   return Math.floor(t / MINUTE) * MINUTE;
 }
@@ -124,7 +151,8 @@ function mergeBuckets(a: MinuteBucket, b: MinuteBucket): MinuteBucket {
  * buckets for long windows (averages, heatmap). Only minute buckets persist.
  */
 export class HistoryStore {
-  private recent: Sample[] = [];
+  private recent: RecentEntry[] = [];
+  private lastIds: string[] = [];
   private minutes: MinuteBucket[] = [];
   private acc: Acc | null = null;
   private clearedAt = 0;
@@ -175,7 +203,19 @@ export class HistoryStore {
   }
 
   add(s: Sample): void {
-    this.recent.push(s);
+    let ids = this.lastIds;
+    if (ids.length !== s.gpus.length || s.gpus.some((g, i) => g.uuid !== ids[i])) ids = this.lastIds = s.gpus.map((g) => g.uuid);
+    this.recent.push({
+      t: s.t,
+      cpu: r1(s.cpu.util),
+      ram: ramPct(s),
+      ids,
+      util: s.gpus.map((g) => g.util),
+      vram: s.gpus.map((g) => {
+        const v = vramPct(g.memUsedMiB, g.memTotalMiB);
+        return v === null ? null : r1(v);
+      }),
+    });
     const cutoff = s.t - RECENT_MS;
     let drop = 0;
     while (drop < this.recent.length && this.recent[drop].t < cutoff) drop++;
@@ -235,16 +275,12 @@ export class HistoryStore {
 
   recentPoints(gpuUuid: string | undefined, sinceMs: number): RecentPoint[] {
     const out: RecentPoint[] = [];
-    for (const s of this.recent) {
-      if (s.t < sinceMs) continue;
-      const g = s.gpus.find((x) => x.uuid === gpuUuid) ?? s.gpus[0];
-      out.push([
-        s.t,
-        g?.util ?? null,
-        g ? vramPct(g.memUsedMiB, g.memTotalMiB) : null,
-        Math.round(s.cpu.util * 10) / 10,
-        s.mem.totalBytes ? Math.round((s.mem.usedBytes / s.mem.totalBytes) * 1000) / 10 : 0,
-      ]);
+    let i = this.recent.length;
+    while (i > 0 && this.recent[i - 1].t >= sinceMs) i--;
+    for (; i < this.recent.length; i++) {
+      const e = this.recent[i];
+      const k = Math.max(0, e.ids.indexOf(gpuUuid ?? ''));
+      out.push([e.t, e.util[k] ?? null, e.vram[k] ?? null, e.cpu, e.ram]);
     }
     return out;
   }
@@ -258,7 +294,9 @@ export class HistoryStore {
     let cn = 0, cpu = 0, mem = 0;
     this.eachSince(from, (b) => {
       if (b.t < from || b.t > to) return;
-      covered++;
+      // With a GPU selected, only minutes that GPU recorded count (a GPU back from a driver
+      // reset must not borrow coverage from its siblings); otherwise any recorded minute counts.
+      if (!gpuUuid || b.gpus[gpuUuid]) covered++;
       cn += b.n;
       cpu += b.cpu * b.n;
       mem += b.mem * b.n;

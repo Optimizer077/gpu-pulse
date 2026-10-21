@@ -1,4 +1,5 @@
 // GPU Pulse dashboard (webview). Receives messages from the extension host and renders them.
+// Per tick only values that changed touch the DOM; canvases redraw only when their data changed.
 (function () {
   'use strict';
   const P = window.Pulse;
@@ -6,8 +7,8 @@
   const saved = vscode.getState() || {};
 
   const state = {
-    recent: [], heatmap: null, windows: [], insights: [], grade: null, sample: null,
-    specs: null, processes: [], selected: null, config: { tempWarn: 80, intervalMs: 1000 },
+    recent: [], heatmap: null, windows: [], insights: [], grade: null, fleet: [], sample: null,
+    specs: null, processes: [], selected: null, config: { tempWarn: 80, intervalMs: 500 },
     vendor: 'none', platform: '', lastTick: 0, range: saved.range || 5 * 60e3, cpuRange: saved.cpuRange || 5 * 60e3,
   };
 
@@ -16,10 +17,15 @@
   const fmt = (v, d = 0) => (v == null || Number.isNaN(v) ? '–' : Number(v).toFixed(d));
   const gb = (bytes) => (bytes / 1073741824).toFixed(bytes >= 100 * 1073741824 ? 0 : 1);
   const mibGb = (m) => (m == null ? '–' : (m / 1024).toFixed(1));
+  const shortName = (n) => String(n || '').replace(/^NVIDIA (GeForce )?/, '');
   const dur = (sec) => {
     const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
     return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
   };
+  // Write-if-changed helpers: the cached value lives on the element, so unchanged ticks cost no DOM work.
+  const txt = (el, v) => { if (el._t !== v) { el._t = v; el.textContent = v; } };
+  const html = (el, v) => { if (el._h !== v) { el._h = v; el.innerHTML = v; return true; } return false; };
+  const css = (el, prop, v) => { const k = '_s' + prop; if (el[k] !== v) { el[k] = v; el.style[prop] = v; } };
 
   const ICON = {
     pulse: '<svg viewBox="0 0 40 40" fill="none"><defs><linearGradient id="lg" x1="0" y1="0" x2="40" y2="40"><stop style="stop-color:var(--glow-gpu)"/><stop offset="1" style="stop-color:var(--s-cpu)"/></linearGradient></defs><rect x="2" y="2" width="36" height="36" rx="10" stroke="url(#lg)" stroke-width="2"/><path d="M8 22h6l3-9 5 16 4-11 2 4h4" stroke="url(#lg)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -61,8 +67,11 @@
       <button class="btn" data-cmd="gpuPulse.exportHistory" title="Export per-minute history as CSV">Export CSV</button>
       <button class="btn" data-cmd="gpuPulse.clearHistory" title="Delete recorded history">Clear</button>
     </header>
-    <nav class="tabs" id="tabs" role="tablist" hidden></nav>
     <main class="grid">
+      <section class="card fleet" id="fleet" hidden style="animation-delay:0s">
+        <h2>All GPUs <span class="sub" id="fleet-sub"></span><span class="right"><span class="sub hint">click or use ← → to choose the detailed view</span></span></h2>
+        <div class="fleet-row" id="fleet-row" role="radiogroup" aria-label="GPU shown in detail"></div>
+      </section>
       <section class="card" style="animation-delay:.02s">
         <h2>Live <span class="sub" id="gpu-name">detecting GPU…</span><span class="right"><span class="sub" id="pstate"></span></span></h2>
         <div class="hero">
@@ -74,7 +83,7 @@
         <div class="readouts" id="readouts"></div>
       </section>
 
-      <section class="card span-8" style="animation-delay:.08s">
+      <section class="card span-8 timeline" style="animation-delay:.08s">
         <h2>GPU timeline <span class="right"><span class="legend" id="lg-gpu"></span>${seg('rng-gpu', state.range)}</span></h2>
         <div class="chart"><canvas id="c-gpu" role="img" aria-label="GPU utilization and VRAM over time"></canvas></div>
       </section>
@@ -113,6 +122,11 @@
   }
 
   shell();
+  const E = {};
+  for (const id of ['host', 'remote', 'live', 'rate', 'fleet', 'fleet-sub', 'fleet-row', 'gpu-name', 'pstate', 'readouts', 'grade',
+    'v-util', 'x-util', 'v-vram', 'x-vram', 'v-temp', 'x-temp', 'v-power', 'x-power', 'lg-gpu', 'lg-cpu', 'insights', 'windows',
+    'cores', 'mem-txt', 'mem-bar', 'specs', 'proc-sub', 'procs']) E[id] = document.getElementById(id);
+
   const tip = P.makeTip();
   const gauges = {
     util: new P.Gauge($('#g-util'), { big: true, ticks: 50 }),
@@ -136,12 +150,28 @@
   });
   const heat = new P.Heatmap($('#c-heat'), tip);
 
+  // ---- selection ----
+  function gpus() { return state.sample?.gpus || []; }
+  function currentGpu() {
+    const gs = gpus();
+    return gs.find((g) => g.uuid === state.selected) || gs[0];
+  }
+  // Ticks already in flight still carry the old selection; ignore it until the host's init confirms.
+  let pendingSel = null;
+  /** Switch the detailed view at once from the latest sample; the host follows up with that GPU's history. */
+  function select(uuid) {
+    if (!uuid || uuid === currentGpu()?.uuid) return;
+    state.selected = pendingSel = uuid;
+    renderFleetSelection(); renderLive(); renderProcs();
+    vscode.postMessage({ type: 'selectGpu', uuid });
+  }
+
   // ---- events ----
   document.addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (!b) return;
     if (b.dataset.cmd) vscode.postMessage({ type: 'command', command: b.dataset.cmd });
-    if (b.dataset.gpu) vscode.postMessage({ type: 'selectGpu', uuid: b.dataset.gpu });
+    if (b.dataset.gpu) select(b.dataset.gpu);
     if (b.dataset.ms) {
       const group = b.parentElement;
       const ms = Number(b.dataset.ms);
@@ -151,43 +181,122 @@
       vscode.setState({ range: state.range, cpuRange: state.cpuRange });
     }
   });
+  // Radio-group keyboard pattern: arrows move focus and selection, Home/End jump.
+  E['fleet-row'].addEventListener('keydown', (e) => {
+    const btns = [...E['fleet-row'].querySelectorAll('button[data-gpu]')];
+    const i = btns.indexOf(document.activeElement);
+    if (i < 0) return;
+    const next = { ArrowRight: i + 1, ArrowDown: i + 1, ArrowLeft: i - 1, ArrowUp: i - 1, Home: 0, End: btns.length - 1 }[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    const b = btns[(next + btns.length) % btns.length];
+    b.focus();
+    select(b.dataset.gpu);
+  });
+  // Core tooltips are filled on hover instead of rewriting 20+ title attributes every tick.
+  E.cores.addEventListener('mouseover', (e) => {
+    const c = e.target.closest('.core');
+    if (c) c.title = `core ${[...E.cores.children].indexOf(c)}: ${c._v ?? 0}%`;
+  });
   new MutationObserver(() => { P.readTokens(); redrawAll(); }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
   function redrawAll() {
     Object.values(gauges).forEach((g) => g.draw());
+    for (const c of fleetCards.values()) c.gauge.draw();
     gpuChart.draw(); cpuChart.draw(); heat.draw();
-    renderWindows();
+    renderWindows(true);
+  }
+
+  // ---- all-GPUs strip (only with 2+ GPUs) ----
+  const fleetCards = new Map();
+  let fleetKey = '';
+  function buildFleet(gs) {
+    E['fleet-row'].innerHTML = gs.map((g) => `<button class="gcard" role="radio" aria-checked="false" tabindex="-1" data-gpu="${esc(g.uuid)}">
+        <span class="gc-head"><span class="gc-idx">GPU ${g.index}</span><span class="gc-name" title="${esc(g.name)}">${esc(shortName(g.name))}</span></span>
+        <span class="gc-body">
+          <span class="gc-gauge"><canvas aria-hidden="true"></canvas><span class="gc-val"><b data-f="util">–</b><small>%</small></span></span>
+          <span class="gc-stats">
+            <span class="gc-k"><span>VRAM</span><b data-f="vram">–</b></span>
+            <span class="gc-bar"><span data-f="vbar"></span></span>
+            <span class="gc-k"><span>Temp</span><b data-f="temp">–</b></span>
+            <span class="gc-k"><span>Power</span><b data-f="power">–</b></span>
+            <span class="gc-k"><span>10 min avg</span><b data-f="avg">–</b></span>
+          </span>
+        </span></button>`).join('');
+    fleetCards.clear();
+    for (const el of E['fleet-row'].children) {
+      const f = {};
+      el.querySelectorAll('[data-f]').forEach((x) => (f[x.dataset.f] = x));
+      fleetCards.set(el.dataset.gpu, { el, f, gauge: new P.Gauge(el.querySelector('canvas'), { mini: true, ticks: 0 }) });
+    }
+  }
+
+  function renderFleet() {
+    const gs = gpus();
+    const multi = gs.length > 1;
+    E.fleet.hidden = !multi;
+    if (!multi) {
+      if (fleetKey) { E['fleet-row'].innerHTML = ''; fleetCards.clear(); fleetKey = ''; }
+      return;
+    }
+    const key = gs.map((g) => `${g.uuid}|${g.index}|${g.name}`).join(',');
+    if (key !== fleetKey) { fleetKey = key; buildFleet(gs); renderFleetSelection(); }
+    const avg = new Map((state.fleet || []).map((f) => [f.uuid, f.util]));
+    const warn = state.config.tempWarn;
+    let sum = 0, n = 0, watts = 0;
+    for (const g of gs) {
+      const c = fleetCards.get(g.uuid);
+      if (!c) continue;
+      if (g.util != null) { sum += g.util; n++; }
+      watts += g.powerW || 0;
+      c.gauge.set(g.util);
+      txt(c.f.util, fmt(g.util));
+      const vp = g.memTotalMiB ? (g.memUsedMiB / g.memTotalMiB) * 100 : null;
+      txt(c.f.vram, `${mibGb(g.memUsedMiB)} / ${mibGb(g.memTotalMiB)} GB`);
+      css(c.f.vbar, 'width', `${vp == null ? 0 : Math.round(vp)}%`);
+      txt(c.f.temp, g.tempC == null ? '–' : `${fmt(g.tempC)} °C`);
+      txt(c.f.power, g.powerW == null ? '–' : `${fmt(g.powerW)} W`);
+      const a = avg.get(g.uuid);
+      txt(c.f.avg, a == null ? '–' : `${fmt(a)}%`);
+      const hot = g.tempC != null && g.tempC >= warn;
+      if (c.hot !== hot) { c.hot = hot; c.el.classList.toggle('hot', hot); }
+    }
+    txt(E['fleet-sub'], `${gs.length} GPUs · mean ${n ? fmt(sum / n) : '–'}% · ${fmt(watts)} W total`);
+  }
+
+  function renderFleetSelection() {
+    const cur = currentGpu()?.uuid;
+    for (const [uuid, c] of fleetCards) {
+      const on = uuid === cur;
+      c.el.setAttribute('aria-checked', String(on));
+      c.el.tabIndex = on ? 0 : -1;
+    }
   }
 
   // ---- renderers ----
-  function currentGpu() {
-    const gs = state.sample?.gpus || [];
-    return gs.find((g) => g.uuid === state.selected) || gs[0];
-  }
-
   function renderLive() {
     const s = state.sample;
     if (!s) return;
     const g = currentGpu();
     const hour = state.windows[2];
     if (g) {
-      $('#gpu-name').textContent = `${g.name}${state.sample.gpus.length > 1 ? ` · GPU ${g.index}` : ''}`;
-      $('#pstate').textContent = [g.pstate, g.pcieGen ? `PCIe ${g.pcieGen}.0 x${g.pcieWidth}` : null].filter(Boolean).join(' · ');
+      txt(E['gpu-name'], `${g.name}${gpus().length > 1 ? ` · GPU ${g.index}` : ''}`);
+      txt(E.pstate, [g.pstate, g.pcieGen ? `PCIe ${g.pcieGen}.0 x${g.pcieWidth}` : null].filter(Boolean).join(' · '));
       gauges.util.set(g.util, hour?.util);
-      $('#v-util').innerHTML = `${fmt(g.util)}<sup>%</sup>`;
-      $('#x-util').textContent = hour?.util != null ? `▲ 1h avg ${fmt(hour.util)}%` : '';
+      html(E['v-util'], `${fmt(g.util)}<sup>%</sup>`);
+      txt(E['x-util'], hour?.util != null ? `▲ 1h avg ${fmt(hour.util)}%` : '');
       const vp = g.memTotalMiB ? (g.memUsedMiB / g.memTotalMiB) * 100 : null;
       gauges.vram.set(vp);
-      $('#v-vram').innerHTML = `${fmt(vp)}<sup>%</sup>`;
-      $('#x-vram').textContent = `${mibGb(g.memUsedMiB)} / ${mibGb(g.memTotalMiB)} GB`;
-      gauges.temp.opt.warn = state.config.tempWarn;
+      html(E['v-vram'], `${fmt(vp)}<sup>%</sup>`);
+      txt(E['x-vram'], `${mibGb(g.memUsedMiB)} / ${mibGb(g.memTotalMiB)} GB`);
+      if (gauges.temp.opt.warn !== state.config.tempWarn) { gauges.temp.opt.warn = state.config.tempWarn; gauges.temp.draw(); }
       gauges.temp.set(g.tempC);
-      $('#v-temp').innerHTML = `${fmt(g.tempC)}<sup>°C</sup>`;
-      $('#x-temp').textContent = hour?.tempPeak ? `1h peak ${fmt(hour.tempPeak)}°C` : '';
+      html(E['v-temp'], `${fmt(g.tempC)}<sup>°C</sup>`);
+      txt(E['x-temp'], hour?.tempPeak ? `1h peak ${fmt(hour.tempPeak)}°C` : '');
       gauges.power.setMax(g.powerLimitW || 100);
       gauges.power.set(g.powerW);
-      $('#v-power').innerHTML = `${fmt(g.powerW)}<sup>W</sup>`;
-      $('#x-power').textContent = g.powerLimitW ? `limit ${fmt(g.powerLimitW)} W` : '';
+      html(E['v-power'], `${fmt(g.powerW)}<sup>W</sup>`);
+      txt(E['x-power'], g.powerLimitW ? `limit ${fmt(g.powerLimitW)} W` : '');
       const ro = [
         ['Core clock', g.clockMHz != null ? `${fmt(g.clockMHz)} MHz` : '–', g.clockMaxMHz ? g.clockMHz / g.clockMaxMHz : null],
         ['Max clock', g.clockMaxMHz != null ? `${fmt(g.clockMaxMHz)} MHz` : '–', null],
@@ -196,39 +305,41 @@
         ['Fan', g.fanPct != null ? `${fmt(g.fanPct)}%` : '–', g.fanPct != null ? g.fanPct / 100 : null],
         ['Power use', g.powerLimitW ? `${fmt((g.powerW / g.powerLimitW) * 100)}% of cap` : '–', g.powerLimitW ? g.powerW / g.powerLimitW : null],
       ];
-      $('#readouts').innerHTML = ro.map(([k, v, f]) =>
-        `<div class="ro"><span>${k}</span><b>${esc(v)}</b>${f != null ? `<div class="bar"><div style="width:${Math.max(0, Math.min(100, f * 100))}%"></div></div>` : ''}</div>`).join('');
+      html(E.readouts, ro.map(([k, v, f]) =>
+        `<div class="ro"><span>${k}</span><b>${esc(v)}</b>${f != null ? `<div class="bar"><div style="width:${Math.round(Math.max(0, Math.min(100, f * 100)))}%"></div></div>` : ''}</div>`).join(''));
       const gr = state.grade;
-      $('#grade').innerHTML = gr ? `<span class="grade ${gr.level}" title="Based on the last hour's mean utilization"><i></i>${esc(gr.label)}</span>` : '';
+      html(E.grade, gr ? `<span class="grade ${gr.level}" title="Based on the last hour's mean utilization"><i></i>${esc(gr.label)}</span>` : '');
     } else {
-      $('#gpu-name').textContent = state.vendor === 'none' ? 'no supported GPU found' : 'reading…';
+      txt(E['gpu-name'], state.vendor === 'none' ? 'no supported GPU found' : 'reading…');
     }
     // CPU / RAM
     const cores = s.cpu.perCore;
-    const host = $('#cores');
+    const host = E.cores;
     if (host.childElementCount !== cores.length) {
       host.style.gridTemplateColumns = `repeat(${cores.length}, minmax(0, 1fr))`;
       host.innerHTML = cores.map((_, i) => `<div class="core" title="core ${i}"><div></div></div>`).join('');
     }
-    cores.forEach((v, i) => { host.children[i].firstChild.style.height = `${v}%`; host.children[i].title = `core ${i}: ${v.toFixed(0)}%`; });
+    cores.forEach((v, i) => {
+      const c = host.children[i], p = Math.round(v);
+      if (c._v !== p) { c._v = p; c.firstChild.style.height = `${p}%`; }
+    });
     const mp = (s.mem.usedBytes / s.mem.totalBytes) * 100;
-    $('#mem-bar').style.width = `${mp}%`;
-    $('#mem-txt').textContent = `${gb(s.mem.usedBytes)} / ${gb(s.mem.totalBytes)} GB · ${mp.toFixed(0)}%`;
+    css(E['mem-bar'], 'width', `${mp.toFixed(1)}%`);
+    txt(E['mem-txt'], `${gb(s.mem.usedBytes)} / ${gb(s.mem.totalBytes)} GB · ${mp.toFixed(0)}%`);
 
     const last = state.recent[state.recent.length - 1];
-    $('#lg-gpu').innerHTML = legend([['GPU util', 's-gpu', last?.[1]], ['VRAM', 's-vram', last?.[2]]]);
-    $('#lg-cpu').innerHTML = legend([['CPU', 's-cpu', last?.[3]], ['RAM', 's-ram', last?.[4]]]);
+    html(E['lg-gpu'], legend([['GPU util', 's-gpu', last?.[1]], ['VRAM', 's-vram', last?.[2]]]));
+    html(E['lg-cpu'], legend([['CPU', 's-cpu', last?.[3]], ['RAM', 's-ram', last?.[4]]]));
   }
 
   function legend(items) {
     return items.map(([l, c, v]) => `<span class="k"><i style="background:var(--${c})"></i>${l} <b>${v == null ? '–' : fmt(v)}%</b></span>`).join('');
   }
 
-  function renderWindows() {
-    const host = $('#windows');
+  /** Rebuilds the cards only when their text changed; sparklines follow the heatmap (per minute) or a theme change. */
+  function renderWindows(redrawSparks) {
     if (!state.windows.length) return;
-    const cells = state.heatmap?.cells || [];
-    host.innerHTML = state.windows.map((w, i) => {
+    const markup = state.windows.map((w, i) => {
       const has = w.util != null;
       const idle = w.idleShare ?? 0, busy = w.busyShare ?? 0, mid = Math.max(0, 1 - idle - busy);
       return `<div class="win">
@@ -236,7 +347,7 @@
         <div class="big">${has ? fmt(w.util) : '–'}<small>% avg</small></div>
         <div class="what">${has ? `peak ${fmt(w.utilPeak)}% · VRAM avg ${fmt(w.vram)}%` : 'no GPU data in this window yet'}</div>
         <div class="stack" role="img" aria-label="idle ${Math.round(idle * 100)}%, active ${Math.round(mid * 100)}%, busy ${Math.round(busy * 100)}%">
-          <div class="idle" style="flex-grow:${idle}"></div><div class="mid" style="flex-grow:${mid}"></div><div class="busy" style="flex-grow:${busy}"></div></div>
+          <div class="idle" style="flex-grow:${idle.toFixed(3)}"></div><div class="mid" style="flex-grow:${mid.toFixed(3)}"></div><div class="busy" style="flex-grow:${busy.toFixed(3)}"></div></div>
         <div class="stack-l"><span>idle ${has ? Math.round(idle * 100) : '–'}%</span><span>busy ${has ? Math.round(busy * 100) : '–'}%</span></div>
         <dl class="kv">
           <dt>Avg power</dt><dd>${w.power ? `${fmt(w.power)} W` : '–'}</dd>
@@ -247,8 +358,14 @@
         <canvas class="spark" data-i="${i}" aria-hidden="true"></canvas>
       </div>`;
     }).join('');
-    host.querySelectorAll('canvas.spark').forEach((cv) => {
+    if (html(E.windows, markup) || redrawSparks) drawSparks();
+  }
+
+  function drawSparks() {
+    const cells = state.heatmap?.cells || [];
+    E.windows.querySelectorAll('canvas.spark').forEach((cv) => {
       const w = state.windows[Number(cv.dataset.i)];
+      if (!w) return;
       let vals = cells.slice(-w.minutes);
       if (vals.length > 120) { // downsample long windows to ~120 points
         const k = Math.ceil(vals.length / 120), out = [];
@@ -262,14 +379,12 @@
     });
   }
 
-  let lastInsights = '';
   function renderInsights() {
-    // The list is aria-live: only touch the DOM when the content changes, or screen readers re-announce every tick.
-    const html = state.insights.length
+    // The list is aria-live: only touch the DOM when the content changes, or screen readers re-announce.
+    html(E.insights, state.insights.length
       ? state.insights.map((x) => `<div class="ins ${x.level}"><div class="ic">${ICON[x.level] || ICON.info}</div>
           <div><b>${esc(x.title)}<span class="lv">${LEVEL_LABEL[x.level] || ''}</span></b><p>${esc(x.detail)}</p></div></div>`).join('')
-      : `<div class="ins good"><div class="ic">${ICON.good}</div><div><b>All clear<span class="lv">good</span></b><p>No issues detected in the last hour.</p></div></div>`;
-    if (html !== lastInsights) $('#insights').innerHTML = lastInsights = html;
+      : `<div class="ins good"><div class="ic">${ICON.good}</div><div><b>All clear<span class="lv">good</span></b><p>No issues detected in the last hour.</p></div></div>`);
   }
 
   function renderProcs() {
@@ -277,22 +392,22 @@
     const list = state.processes.filter((p) => !g || p.gpuUuid === g.uuid)
       .sort((a, b) => (b.usedMiB ?? -1) - (a.usedMiB ?? -1));
     const noMem = list.length && list.every((p) => p.usedMiB == null);
-    $('#proc-sub').textContent = list.length ? `${list.length} using this GPU${noMem && state.platform === 'win32' ? ' · per-process VRAM is not reported by Windows (WDDM)' : ''}` : '';
+    txt(E['proc-sub'], list.length ? `${list.length} using this GPU${noMem && state.platform === 'win32' ? ' · per-process VRAM is not reported by Windows (WDDM)' : ''}` : '');
     if (state.vendor !== 'nvidia') {
-      $('#procs').innerHTML = '<div class="empty">Process listing needs an NVIDIA GPU with nvidia-smi.</div>';
+      html(E.procs, '<div class="empty">Process listing needs an NVIDIA GPU with nvidia-smi.</div>');
       return;
     }
-    $('#procs').innerHTML = list.length
+    html(E.procs, list.length
       ? `<table><thead><tr><th>Process</th><th class="n">PID</th><th class="n">VRAM</th></tr></thead><tbody>${
         list.map((p) => `<tr><td class="name" title="${esc(p.name)}">${esc(p.name)}</td><td class="n">${p.pid}</td><td class="n">${p.usedMiB == null ? 'n/a' : `${fmt(p.usedMiB)} MiB`}</td></tr>`).join('')}</tbody></table>`
-      : '<div class="empty">No compute processes on this GPU.</div>';
+      : '<div class="empty">No compute processes on this GPU.</div>');
   }
 
   function renderSpecs() {
     const sp = state.specs;
     if (!sp) return;
-    $('#host').textContent = `${sp.hostname} · ${sp.os}`;
-    const rm = $('#remote');
+    txt(E.host, `${sp.hostname} · ${sp.os}`);
+    const rm = E.remote;
     if (sp.remote) { rm.hidden = false; rm.querySelector('span').textContent = sp.remote; }
     const cards = [
       [ICON.cpu, 'Processor', sp.cpu.model, `${sp.cpu.cores} cores · ${sp.cpu.threads} threads${sp.cpu.maxGHz && sp.cpu.maxGHz > (sp.cpu.baseGHz || 0) ? ` · up to ${sp.cpu.maxGHz} GHz` : sp.cpu.baseGHz ? ` · base ${sp.cpu.baseGHz} GHz` : ''}`],
@@ -305,57 +420,90 @@
       sp.cudaVersion ? [ICON.bolt, 'CUDA', `CUDA ${sp.cudaVersion}`, 'max version supported by the driver'] : null,
       [ICON.clock, 'Uptime', dur(sp.uptimeSec), `${sp.hostname}`],
     ].filter(Boolean);
-    $('#specs').innerHTML = cards.map(([ic, k, v, d]) =>
-      `<div class="spec"><div class="ic">${ic}</div><div><span>${esc(k)}</span><b>${esc(v)}</b>${d ? `<p>${esc(d).replace(/\n/g, '<br>')}</p>` : ''}</div></div>`).join('');
-  }
-
-  function renderTabs() {
-    const gs = state.sample?.gpus || [];
-    const tabs = $('#tabs');
-    tabs.hidden = gs.length < 2;
-    if (gs.length < 2) return;
-    tabs.innerHTML = gs.map((g) => `<button role="tab" data-gpu="${esc(g.uuid)}" aria-selected="${g.uuid === state.selected}">GPU ${g.index} · ${esc(g.name.replace(/^NVIDIA (GeForce )?/, ''))}</button>`).join('');
+    html(E.specs, cards.map(([ic, k, v, d]) =>
+      `<div class="spec"><div class="ic">${ic}</div><div><span>${esc(k)}</span><b>${esc(v)}</b>${d ? `<p>${esc(d).replace(/\n/g, '<br>')}</p>` : ''}</div></div>`).join(''));
   }
 
   function renderRate() {
     const sec = state.config.intervalMs / 1000;
-    $('#rate').textContent = `live · ${sec < 1 ? sec.toFixed(2) : sec.toFixed(1)}s`;
+    txt(E.rate, `live · ${sec < 1 ? sec.toFixed(2) : sec.toFixed(1)}s`);
+    // Gauge tweens finish before the next sample, so the animation loop idles between ticks.
+    P.setAnimMs(state.config.intervalMs * 0.6);
   }
 
-  setInterval(() => {
-    const stale = Date.now() - state.lastTick > Math.max(4000, state.config.intervalMs * 3);
-    $('#live').classList.toggle('stale', stale);
-  }, 1000);
+  function renderAll() {
+    gpuChart.setData(state.recent); cpuChart.setData(state.recent); heat.set(state.heatmap);
+    renderFleet(); renderFleetSelection(); renderLive(); renderWindows(true); renderInsights(); renderProcs(); renderSpecs(); renderRate();
+  }
 
-  // ---- messages ----
+  // ---- liveness dot; paused with everything else while the document is hidden ----
+  let staleTimer = 0;
+  function checkStale() {
+    const stale = Date.now() - state.lastTick > Math.max(4000, state.config.intervalMs * 3);
+    if (E.live._stale !== stale) { E.live._stale = stale; E.live.classList.toggle('stale', stale); }
+  }
+  function startStaleTimer() { if (!staleTimer) staleTimer = setInterval(checkStale, 1000); }
+  let dirty = false;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearInterval(staleTimer); staleTimer = 0; return; }
+    startStaleTimer();
+    if (dirty) { dirty = false; renderAll(); }
+  });
+  if (!document.hidden) startStaleTimer();
+
+  function applyAnalysis(a) {
+    if (!a) return;
+    state.windows = a.windows || [];
+    state.insights = a.insights || [];
+    state.grade = a.grade;
+    state.fleet = a.fleet || [];
+  }
+
+  // ---- messages: state is always updated; rendering waits while the document is hidden ----
   window.addEventListener('message', (ev) => {
     const m = ev.data;
     switch (m.type) {
       case 'init':
+        pendingSel = null;
         Object.assign(state, {
-          recent: m.recent || [], heatmap: m.heatmap, windows: m.windows || [], insights: m.insights || [],
-          grade: m.grade, sample: m.sample, specs: m.specs, processes: m.processes || [], selected: m.selected,
-          config: m.config, vendor: m.vendor, platform: m.platform, lastTick: Date.now(),
+          recent: m.recent || [], heatmap: m.heatmap, sample: m.sample, specs: m.specs, processes: m.processes || [],
+          selected: m.selected, config: m.config, vendor: m.vendor, platform: m.platform, lastTick: Date.now(),
         });
-        gpuChart.setData(state.recent); cpuChart.setData(state.recent); heat.set(state.heatmap);
-        renderTabs(); renderLive(); renderWindows(); renderInsights(); renderProcs(); renderSpecs(); renderRate();
+        applyAnalysis(m.analysis || m);
+        if (document.hidden) dirty = true; else renderAll();
         break;
       case 'tick': {
         const prevSel = state.selected;
-        Object.assign(state, { sample: m.sample, windows: m.windows, insights: m.insights, grade: m.grade, selected: m.selected, lastTick: Date.now() });
-        if (m.point) {
+        Object.assign(state, { sample: m.sample, selected: pendingSel || m.selected, lastTick: Date.now() });
+        if (m.analysis && !pendingSel) applyAnalysis(m.analysis);
+        if (m.point && !pendingSel) {
           state.recent.push(m.point);
           const cutoff = m.point[0] - 60 * 60e3;
-          while (state.recent.length && state.recent[0][0] < cutoff) state.recent.shift();
+          let drop = 0;
+          while (drop < state.recent.length && state.recent[drop][0] < cutoff) drop++;
+          if (drop) state.recent.splice(0, drop);
         }
+        if (document.hidden) { dirty = true; break; }
         gpuChart.setData(state.recent); cpuChart.setData(state.recent);
-        if (prevSel !== state.selected) renderTabs();
-        renderLive(); renderWindows(); renderInsights();
+        renderFleet();
+        if (prevSel !== state.selected) renderFleetSelection();
+        renderLive();
+        if (m.analysis) { renderWindows(false); renderInsights(); }
+        if (E.live._stale) checkStale();
         break;
       }
-      case 'heatmap': state.heatmap = m.heatmap; heat.set(m.heatmap); break;
-      case 'processes': state.processes = m.processes; renderProcs(); break;
-      case 'specs': state.specs = m.specs; renderSpecs(); break;
+      case 'heatmap':
+        state.heatmap = m.heatmap;
+        if (document.hidden) dirty = true; else { heat.set(m.heatmap); drawSparks(); }
+        break;
+      case 'processes':
+        state.processes = m.processes;
+        if (document.hidden) dirty = true; else renderProcs();
+        break;
+      case 'specs':
+        state.specs = m.specs;
+        if (document.hidden) dirty = true; else renderSpecs();
+        break;
     }
   });
 

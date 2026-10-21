@@ -7,6 +7,7 @@ node_modules/**
 .vscode-test/**
 dist/*.map
 dist/smoke.js
+dist/bench.js
 dist/preview-data.js
 **/*.ts
 tsconfig.json
@@ -19,3 +20,5 @@ pip/**
 release/**
 .gitattributes
 docs/**
+.claude/**
+.github/**

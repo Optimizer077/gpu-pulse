@@ -16,6 +16,19 @@ from .monitor import Monitor, MonitorConfig, default_history_path
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_FPS = 12.0  # smooth enough for eased gauges and the pulse; ~40% cheaper than 20 fps
+MAX_DEMO_GPUS = 16
+
+
+def _gpu_count(text: str) -> int:
+    try:
+        n = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
+    if not 1 <= n <= MAX_DEMO_GPUS:
+        raise argparse.ArgumentTypeError(f"must be between 1 and {MAX_DEMO_GPUS}")
+    return n
+
 
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="gpu-pulse", description="Terminal GPU dashboard with usage history.")
@@ -24,10 +37,17 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--temp-warn", type=float, default=80.0, help="temperature warning threshold in °C")
     p.add_argument("-i", "--interval", type=float, default=0.5, help="dashboard: seconds between samples (default 0.5)")
     p.add_argument(
-        "--fps", type=float, default=20.0, help="dashboard: animation frames per second, 0 = off (default 20)"
+        "--fps", type=float, default=DEFAULT_FPS, help="dashboard: animation frames per second, 0 = off (default 12)"
     )
     p.add_argument(
         "--demo", action="store_true", help="dashboard/status: simulated GPU load to preview the UI (nothing is saved)"
+    )
+    p.add_argument(
+        "--demo-gpus",
+        type=_gpu_count,
+        default=1,
+        metavar="N",
+        help="with --demo: number of simulated GPUs, 1-16 (default 1); GPU 2 plays a straggler",
     )
     sub = p.add_subparsers(dest="cmd")
     sub.add_parser("dashboard", help="full-screen live dashboard (default)")
@@ -52,6 +72,7 @@ def _monitor(args: argparse.Namespace, interval: float = 1.0, persist: bool = Tr
             history_path=args.history,
             persist=persist and not demo,
             demo=demo,
+            demo_gpus=args.demo_gpus if demo else 1,
         )
     )
 
@@ -79,7 +100,10 @@ def _log_forever(mon: Monitor) -> None:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.demo_gpus > 1 and not args.demo:
+        parser.error("--demo-gpus only applies with --demo (real GPUs are always all shown)")
     cmd = args.cmd or "dashboard"
     if cmd == "dashboard":
         # stderr output would draw over the full-screen UI; route it to Textual's log instead.

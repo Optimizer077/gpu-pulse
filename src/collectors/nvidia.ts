@@ -91,8 +91,15 @@ export function parseCudaVersion(banner: string): string | null {
   return /CUDA Version:\s*([\d.]+)/.exec(banner)?.[1] ?? null;
 }
 
+/** Count physical GPUs in `nvidia-smi -L` output (MIG devices are indented sub-lines). */
+export function countGpus(listing: string): number {
+  return listing.split(/\r?\n/).filter((l) => /^GPU \d+:/.test(l)).length;
+}
+
 export class NvidiaCollector {
-  private bin: string | null = null;
+  private binPath: string | null = null;
+  /** GPUs listed by `nvidia-smi -L` at detection (0 if unknown). */
+  gpuCount = 0;
 
   constructor(private readonly customPath: string) {}
 
@@ -111,8 +118,8 @@ export class NvidiaCollector {
       if (!c) continue;
       if (path.isAbsolute(c) && !fs.existsSync(c)) continue;
       try {
-        await run(c, ['-L'], 5000);
-        this.bin = c;
+        this.gpuCount = countGpus(await run(c, ['-L'], 5000));
+        this.binPath = c;
         return true;
       } catch {
         // try next candidate
@@ -122,7 +129,12 @@ export class NvidiaCollector {
   }
 
   get available(): boolean {
-    return this.bin !== null;
+    return this.binPath !== null;
+  }
+
+  /** Resolved nvidia-smi path after detect(), else null. */
+  get bin(): string | null {
+    return this.binPath;
   }
 
   async sample(): Promise<GpuSample[]> {

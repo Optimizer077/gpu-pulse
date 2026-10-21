@@ -124,14 +124,38 @@ button.btn {
   transition: background .15s, color .15s, border-color .15s;
 }
 button.btn:hover { color: var(--ink); border-color: var(--s-gpu); background: color-mix(in srgb, var(--s-gpu) 14%, var(--surface-2)); }
-button.btn:focus-visible, .seg button:focus-visible, .tabs button:focus-visible { outline: 2px solid var(--glow-gpu); outline-offset: 2px; }
+button.btn:focus-visible, .seg button:focus-visible, .gcard:focus-visible { outline: 2px solid var(--glow-gpu); outline-offset: 2px; }
 
-.tabs { display: flex; gap: 6px; margin: -6px 0 16px; flex-wrap: wrap; }
-.tabs button {
-  border: 1px solid var(--hair-strong); background: transparent; color: var(--ink-2); border-radius: 8px;
-  padding: 6px 12px; font-family: var(--display); font-size: 12px; cursor: pointer; letter-spacing: .04em;
+/* ---- All-GPUs strip (2+ GPUs) ---- */
+.fleet .hint { font-size: 10.5px; }
+.fleet-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; }
+.gcard {
+  display: block; text-align: left; min-width: 0; padding: 10px 12px 11px; border-radius: 12px; cursor: pointer;
+  border: 1px solid var(--hair); background: color-mix(in srgb, var(--page) 40%, transparent); color: var(--ink-2);
+  font: inherit; transition: border-color .15s, background .15s, box-shadow .15s;
 }
-.tabs button[aria-selected='true'] { color: var(--ink); border-color: var(--s-gpu); background: color-mix(in srgb, var(--s-gpu) 18%, transparent); }
+.gcard:hover { border-color: var(--hair-strong); }
+.gcard[aria-checked='true'] {
+  border-color: var(--s-gpu); background: color-mix(in srgb, var(--s-gpu) 12%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--s-gpu) 45%, transparent), 0 8px 24px -14px color-mix(in srgb, var(--glow-gpu) 70%, transparent);
+}
+.gcard.hot { border-color: color-mix(in srgb, var(--critical) 70%, transparent); }
+.gcard.hot [data-f='temp'] { color: var(--critical); }
+.gc-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.gc-idx { font-family: var(--display); font-weight: 700; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink); white-space: nowrap; }
+.gc-name { font-family: var(--mono); font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.gc-body { display: grid; grid-template-columns: 82px 1fr; gap: 10px; align-items: center; margin-top: 4px; }
+.gc-gauge { position: relative; display: block; height: 72px; }
+.gc-gauge canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.gc-val { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding-top: 8%; pointer-events: none; }
+.gc-val b { font-family: var(--mono); font-weight: 600; font-size: 19px; color: var(--ink); letter-spacing: -.02em; }
+.gc-val small { font-family: var(--mono); font-size: 10px; color: var(--ink-2); margin-left: 1px; }
+.gc-stats { display: grid; gap: 3px; min-width: 0; }
+.gc-k { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; }
+.gc-k span { color: var(--muted); }
+.gc-k b { font-family: var(--mono); font-weight: 600; color: var(--ink); white-space: nowrap; }
+.gc-bar { display: block; height: 3px; border-radius: 2px; background: var(--grid); overflow: hidden; margin: 0 0 3px; }
+.gc-bar > span { display: block; height: 100%; width: 0; border-radius: 2px; background: var(--s-vram); transition: width .4s ease; }
 
 /* ---- Cards ---- */
 .grid { display: grid; gap: 14px; grid-template-columns: repeat(12, minmax(0, 1fr)); }
@@ -189,6 +213,9 @@ body.vscode-light .card { box-shadow: 0 1px 0 0 #fff inset, 0 12px 30px -22px rg
 /* ---- Charts ---- */
 .chart { position: relative; height: 230px; }
 .chart.short { height: 170px; }
+/* The timeline fills its row when the insights list next to it is taller (common with several GPUs). */
+.timeline { display: flex; flex-direction: column; }
+.timeline .chart { flex: 1 1 230px; height: auto; min-height: 230px; }
 .chart canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-family: var(--mono); font-size: 11px; color: var(--ink-2); }
 .legend .k { display: inline-flex; align-items: center; gap: 6px; }

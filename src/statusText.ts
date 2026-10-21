@@ -1,0 +1,61 @@
+import type { GpuSample, Sample } from './types';
+
+/** Status bar content as plain strings (no vscode dependency, so it is unit-testable). */
+export interface StatusView {
+  text: string;
+  /** Markdown with $(icon) syntax. */
+  tooltip: string;
+  warn: boolean;
+}
+
+const dash = (v: number | null | undefined, d = 0) => (v === null || v === undefined ? '–' : v.toFixed(d));
+const shortName = (n: string) => n.replace(/^NVIDIA (GeForce )?/, '');
+
+function vramGb(g: GpuSample): string {
+  return g.memUsedMiB !== null && g.memTotalMiB ? `${(g.memUsedMiB / 1024).toFixed(1)}/${(g.memTotalMiB / 1024).toFixed(0)} GB` : '–';
+}
+
+function cpuLine(s: Sample): string {
+  const ram = s.mem.totalBytes ? Math.round((s.mem.usedBytes / s.mem.totalBytes) * 100) : 0;
+  return `$(dashboard) CPU ${Math.round(s.cpu.util)}% · RAM ${ram}%\n\n`;
+}
+
+export function statusView(s: Sample, tempWarn: number): StatusView {
+  const gs = s.gpus;
+  if (!gs.length) {
+    return { text: `$(pulse) CPU ${Math.round(s.cpu.util)}%`, tooltip: 'GPU Pulse — no GPU detected. Click to open the dashboard.', warn: false };
+  }
+  const temps = gs.map((g) => g.tempC).filter((t): t is number => t !== null);
+  const hottest = temps.length ? Math.max(...temps) : null;
+  const warn = hottest !== null && hottest >= tempWarn;
+
+  if (gs.length === 1) {
+    const g = gs[0];
+    const vram = g.memUsedMiB !== null && g.memTotalMiB ? ` · ${(g.memUsedMiB / 1024).toFixed(1)}/${Math.round(g.memTotalMiB / 1024)} GB` : '';
+    const temp = g.tempC !== null ? ` · ${Math.round(g.tempC)}°C` : '';
+    const tooltip =
+      '**GPU Pulse**\n\n' +
+      `$(circuit-board) ${g.name} — ${dash(g.util)}% util, ${vramGb(g)}, ${dash(g.tempC)} °C, ${dash(g.powerW)} W\n\n` +
+      cpuLine(s) +
+      '_Click to open the dashboard_';
+    return { text: `$(pulse) GPU ${dash(g.util)}%${vram}${temp}`, tooltip, warn };
+  }
+
+  const utils = gs.map((g) => g.util).filter((u): u is number => u !== null);
+  const avg = utils.length ? utils.reduce((a, b) => a + b, 0) / utils.length : null;
+  const max = utils.length ? Math.max(...utils) : null;
+  const text =
+    `$(pulse) GPU ×${gs.length} avg ${dash(avg)}% · max ${dash(max)}%` + (hottest !== null ? ` · hottest ${Math.round(hottest)}°C` : '');
+  const rows = gs.map((g) => {
+    const hot = g.tempC !== null && g.tempC >= tempWarn ? ' $(flame)' : '';
+    return `| ${g.index} · ${shortName(g.name)} | ${dash(g.util)}% | ${vramGb(g)} | ${dash(g.tempC)} °C${hot} | ${dash(g.powerW)} W |`;
+  });
+  const tooltip =
+    `**GPU Pulse** — ${gs.length} GPUs\n\n` +
+    '| GPU | Util | VRAM | Temp | Power |\n|:--|--:|--:|--:|--:|\n' +
+    rows.join('\n') +
+    '\n\n' +
+    cpuLine(s) +
+    '_Click to open the dashboard_';
+  return { text, tooltip, warn };
+}
