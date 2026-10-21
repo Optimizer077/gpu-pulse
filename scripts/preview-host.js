@@ -66,9 +66,9 @@
     ];
     if (multi) {
       insights.splice(1, 0, { level: 'warning', title: `GPU ${N - 1} well below the others`,
-        detail: `Last 10 min: GPU ${N - 1} 24% vs 81% mean on the other GPUs. If one job spans these GPUs (e.g. data-parallel training), this fits a straggler, an uneven data split, or a rank that is not using its GPU. If they run separate jobs, it is expected.` });
+        detail: `Last 10 recorded min: GPU ${N - 1} 24% vs 81% mean on the other GPUs. If one job spans these GPUs (e.g. data-parallel training), this fits a straggler, an uneven data split, or a rank that is not using its GPU. If they run separate jobs, it is expected.` });
       insights.push({ level: 'info', title: 'Uneven memory across GPUs',
-        detail: 'Last 10 min: GPU 0 averaged 91% VRAM, GPU ' + (N - 1) + ' 38%. In data-parallel jobs rank 0 often holds extra state (gathered outputs, logging); a large gap can also mean an unbalanced model split.' });
+        detail: 'Last 10 recorded min: GPU 0 averaged 91% VRAM, GPU ' + (N - 1) + ' 38%. In data-parallel jobs rank 0 often holds extra state (gathered outputs, logging); a large gap can also mean an unbalanced model split.' });
     }
     return {
       windows: [W('5 min', 5, 5, 84.2, 0.03, 0.82), W('30 min', 30, 30, 79.5, 0.07, 0.74), W('1 hour', 60, 60, 61.3, 0.27, 0.55), W('24 hours', 1440, 1080, 52.8, 0.31, 0.46)],
@@ -105,6 +105,15 @@
         board: 'HP 8D34', system: multi ? 'NVIDIA DGX A100' : 'HP OMEN 16L Gaming Desktop', disks: [{ name: 'SAMSUNG MZVL81T0HFLB', sizeBytes: 1024203640320, type: 'NVMe' }],
         gpus: Array.from({ length: N }, () => ({ name: NAME, vramMiB: TOTAL, driver: '591.74', vbios: '98.06.1f.00.f0', extra: ['NVIDIA', 'PCI'] })),
         cudaVersion: '13.1', remote: 'ssh-remote' },
+      // ?alerts: example active alerts (the badge in the header / side bar), consistent with the synthetic data.
+      alerts: q.has('alerts')
+        ? multi
+          ? [
+            { level: 'warning', title: 'GPU 1 running hot: 87 °C', detail: 'At or above your 80 °C threshold for 30 s.' },
+            { level: 'info', title: 'Job on GPU 0 finished after 47 min (avg 82%)', detail: 'Utilization stayed under 10% for 60 s.' },
+          ]
+          : [{ level: 'info', title: 'Job on GPU 0 finished after 47 min (avg 82%)', detail: 'Utilization stayed under 10% for 60 s.' }]
+        : [],
     });
   }
 
