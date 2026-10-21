@@ -2,10 +2,17 @@
 
 A GPU dashboard that runs in your terminal. It shows live usage and how well the GPU has been used over the last 5 minutes, 30 minutes, hour and day. It works on Windows and Linux, including over plain SSH. This is the terminal companion to the **GPU Pulse** VS Code extension.
 
+![Animated ring gauges](https://raw.githubusercontent.com/Optimizer077/gpu-pulse/main/docs/images/terminal-rings.gif)
+
 ```bash
-pip install gpu-pulse      # or: uv tool install gpu-pulse / pipx install gpu-pulse
+pip install "git+https://github.com/Optimizer077/gpu-pulse.git#subdirectory=pip"   # or a wheel from Releases
 gpu-pulse                  # full-screen live dashboard
+gpu-pulse --demo           # preview every feature with simulated load
 ```
+
+![Overview tab](https://raw.githubusercontent.com/Optimizer077/gpu-pulse/main/docs/images/terminal-overview.png)
+
+Full documentation, screenshots and the bottleneck reference are in the [project README](https://github.com/Optimizer077/gpu-pulse#readme).
 
 ## Commands
 
