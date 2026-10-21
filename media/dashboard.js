@@ -9,7 +9,7 @@
   const state = {
     recent: [], heatmap: null, windows: [], insights: [], grade: null, fleet: [], sample: null,
     specs: null, processes: [], selected: null, config: { tempWarn: 80, intervalMs: 500 },
-    vendor: 'none', platform: '', lastTick: 0, range: saved.range || 5 * 60e3, cpuRange: saved.cpuRange || 5 * 60e3,
+    vendor: 'none', platform: '', lastTick: 0, alerts: [], range: saved.range || 5 * 60e3, cpuRange: saved.cpuRange || 5 * 60e3,
   };
 
   const $ = (s, r = document) => r.querySelector(s);
@@ -63,6 +63,7 @@
       <div class="brand">${ICON.pulse}<div><h1>GPU PULSE</h1><small id="host">—</small></div></div>
       <div class="spacer"></div>
       <span class="chip" id="remote" hidden>${ICON.remote.replace('<svg', '<svg width="13" height="13"')}<span></span></span>
+      <span class="chip alert-chip" id="alerts" role="status" hidden></span>
       <span class="chip"><span class="live-dot" id="live"></span><span id="rate">live</span></span>
       <button class="btn" data-cmd="gpuPulse.exportHistory" title="Export per-minute history as CSV">Export CSV</button>
       <button class="btn" data-cmd="gpuPulse.clearHistory" title="Delete recorded history">Clear</button>
@@ -123,7 +124,7 @@
 
   shell();
   const E = {};
-  for (const id of ['host', 'remote', 'live', 'rate', 'fleet', 'fleet-sub', 'fleet-row', 'gpu-name', 'pstate', 'readouts', 'grade',
+  for (const id of ['host', 'remote', 'alerts', 'live', 'rate', 'fleet', 'fleet-sub', 'fleet-row', 'gpu-name', 'pstate', 'readouts', 'grade',
     'v-util', 'x-util', 'v-vram', 'x-vram', 'v-temp', 'x-temp', 'v-power', 'x-power', 'lg-gpu', 'lg-cpu', 'insights', 'windows',
     'cores', 'mem-txt', 'mem-bar', 'specs', 'proc-sub', 'procs']) E[id] = document.getElementById(id);
 
@@ -431,9 +432,21 @@
     P.setAnimMs(state.config.intervalMs * 0.6);
   }
 
+  // Active alerts (conditions still holding): a small header badge; the titles are in its tooltip.
+  function renderAlerts() {
+    const a = state.alerts || [];
+    if (E.alerts.hidden !== !a.length) E.alerts.hidden = !a.length;
+    const warn = a.some((x) => x.level === 'warning');
+    E.alerts.classList.toggle('warn', warn);
+    // Alert text only goes through DOM properties (title / aria-label), never innerHTML.
+    E.alerts.title = a.map((x) => `${x.title}. ${x.detail}`).join('\n');
+    E.alerts.setAttribute('aria-label', a.length ? `${a.length} active GPU alert${a.length > 1 ? 's' : ''}: ${a.map((x) => x.title).join('; ')}` : '');
+    html(E.alerts, a.length ? `${ICON[warn ? 'warning' : 'info'].replace('<svg', '<svg width="13" height="13" aria-hidden="true"')}<span>${a.length} alert${a.length > 1 ? 's' : ''}</span>` : '');
+  }
+
   function renderAll() {
     gpuChart.setData(state.recent); cpuChart.setData(state.recent); heat.set(state.heatmap);
-    renderFleet(); renderFleetSelection(); renderLive(); renderWindows(true); renderInsights(); renderProcs(); renderSpecs(); renderRate();
+    renderFleet(); renderFleetSelection(); renderLive(); renderWindows(true); renderInsights(); renderProcs(); renderSpecs(); renderRate(); renderAlerts();
   }
 
   // ---- liveness dot; paused with everything else while the document is hidden ----
@@ -467,7 +480,7 @@
         pendingSel = null;
         Object.assign(state, {
           recent: m.recent || [], heatmap: m.heatmap, sample: m.sample, specs: m.specs, processes: m.processes || [],
-          selected: m.selected, config: m.config, vendor: m.vendor, platform: m.platform, lastTick: Date.now(),
+          selected: m.selected, config: m.config, vendor: m.vendor, platform: m.platform, lastTick: Date.now(), alerts: m.alerts || [],
         });
         applyAnalysis(m.analysis || m);
         if (document.hidden) dirty = true; else renderAll();
@@ -476,6 +489,7 @@
         const prevSel = state.selected;
         Object.assign(state, { sample: m.sample, selected: pendingSel || m.selected, lastTick: Date.now() });
         if (m.analysis && !pendingSel) applyAnalysis(m.analysis);
+        if (m.alerts) state.alerts = m.alerts;
         if (m.point && !pendingSel) {
           state.recent.push(m.point);
           const cutoff = m.point[0] - 60 * 60e3;
@@ -489,6 +503,7 @@
         if (prevSel !== state.selected) renderFleetSelection();
         renderLive();
         if (m.analysis) { renderWindows(false); renderInsights(); }
+        if (m.alerts) renderAlerts();
         if (E.live._stale) checkStale();
         break;
       }

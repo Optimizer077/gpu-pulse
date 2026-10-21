@@ -90,13 +90,13 @@ Download from **[Releases](https://github.com/Optimizer077/gpu-pulse/releases/la
 
 | File | Install |
 |---|---|
-| `gpu-pulse-0.2.0.vsix` | `code --install-extension gpu-pulse-0.2.0.vsix`, or in VS Code: Extensions → `…` → **Install from VSIX…** |
-| `gpu_pulse-0.2.0-py3-none-any.whl` | `pip install gpu_pulse-0.2.0-py3-none-any.whl` or `uv tool install gpu_pulse-0.2.0-py3-none-any.whl` |
+| `gpu-pulse-0.3.0.vsix` | `code --install-extension gpu-pulse-0.3.0.vsix`, or in VS Code: Extensions → `…` → **Install from VSIX…** |
+| `gpu_pulse-0.3.0-py3-none-any.whl` | `pip install gpu_pulse-0.3.0-py3-none-any.whl` or `uv tool install gpu_pulse-0.3.0-py3-none-any.whl` |
 
 You can also install the terminal tool straight from GitHub:
 
 ```bash
-pip install "https://github.com/Optimizer077/gpu-pulse/releases/download/v0.2.0/gpu_pulse-0.2.0-py3-none-any.whl"
+pip install "https://github.com/Optimizer077/gpu-pulse/releases/download/v0.3.0/gpu_pulse-0.3.0-py3-none-any.whl"
 # or the latest source
 pip install "git+https://github.com/Optimizer077/gpu-pulse.git#subdirectory=pip"
 ```
@@ -204,6 +204,24 @@ The dashboard always shows which basis it used: **SM activity** or **utilization
 - PCIe link running below its maximum (e.g. Gen4 x8 on a Gen5 x16 card)
 - Tensor Cores idle during heavy FP32 work, which suggests enabling AMP, bf16 or TF32
 - Sudden utilization collapse mid-session, clocks well below max with no throttle reason, temperature climbing fast
+
+---
+
+## Alerts
+
+Both tools watch for four situations and notify you once. An alert then stays quiet until its condition clears, and repeats at most every 30 minutes per GPU:
+
+| Alert | Fires when | Clears when |
+|---|---|---|
+| **Running hot** | GPU temperature ≥ your warning threshold for 30 s | 3 °C below the threshold |
+| **VRAM nearly full** | VRAM ≥ 95% for 20 s | below 90% |
+| **VRAM held while idle** | utilization < 10% while VRAM ≥ 50%, for 15 min (configurable) | utilization ≥ 15% or VRAM < 40% |
+| **Job finished** | a busy stretch of ≥ 10 min (configurable) ends: GPU idle for 60 s. Shows the duration and average utilization | next job |
+
+- **VS Code:** notifications with **Open Dashboard** and **Mute 1 hour**. Each alert type can be turned off under `gpuPulse.alerts.*`. Alerts keep working while the dashboard is closed, as long as sampling runs (status bar or background recording on).
+- **Terminal:** pop-up toasts in the dashboard, plus a list on the Diagnosis tab; `m` mutes for an hour.
+  - Options: `--no-alerts`, `--bell`, `--idle-held-min`, `--job-min`.
+  - `gpu-pulse log --alerts` prints alerts with no UI open. Add `--notify` for desktop notifications on Linux (`notify-send`).
 
 ---
 
@@ -388,7 +406,7 @@ Use `gpu-pulse --fps 10`, or `--fps 0` to turn animation off. Values still updat
 ├── src/, media/, test/     VS Code extension (TypeScript, esbuild, vitest)
 ├── pip/                    Terminal dashboard (Python, Textual, uv)
 │   ├── src/gpu_pulse/      collectors, history, intelligence engine, UI
-│   └── tests/              193 tests
+│   └── tests/              227 tests
 ├── scripts/                preview page, icon, smoke test
 └── docs/images/            README visuals
 ```

@@ -20,6 +20,7 @@ KEYS = (
     ("g then 0 – 9", "jump to the GPU with that index (as nvidia-smi numbers them); g 1 2 → GPU 12"),
     ("r", "timeline range: 1 / 5 / 15 / 60 min"),
     ("e", "export per-minute history as CSV"),
+    ("m", "mute alerts for 1 hour / unmute (alerts are listed on the Diagnosis tab)"),
     ("?", "this help · Esc closes"),
     ("q", "quit"),
 )
@@ -40,6 +41,8 @@ METRICS = (
     ("Pulse", "Heartbeat whose rate and height follow GPU utilization."),
     ("All GPUs", "One line per GPU: bright bar = SM activity, dim = kernel running but SMs idle. Cross-GPU "
      "checks flag stragglers, uneven VRAM, a GPU throttling alone and mismatched PCIe links."),
+    ("Alerts", "Toasts when a GPU runs hot (30 s), VRAM is nearly full (20 s), a GPU idles while holding VRAM, "
+     "or a long job finishes. Each fires once, re-arms after clearing, and waits 30 min before repeating."),
     ("Rings", "Temperature turns amber 10 °C below the warning threshold and red at it; power turns amber "
      "while the power cap throttles clocks."),
 )  # fmt: skip

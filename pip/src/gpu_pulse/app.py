@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from rich.style import Style
 from rich.text import Text
@@ -29,6 +29,8 @@ from textual.widgets import ContentSwitcher, Footer
 from . import pages
 from . import panels as P
 from . import render as R
+from .alerts import Alert, AlertConfig
+from .alertview import AlertCenter, alerts_list
 from .fleet import Fleet
 from .fleetview import Hit, fleet_lines
 from .intel import Diagnosis
@@ -139,16 +141,28 @@ class GpuDashboard(App[None]):
         Binding("G,shift+g", "next_gpu(-1)", "Prev GPU", show=False),
         Binding("r", "next_range", "Range"),
         Binding("e", "export", "Export CSV"),
+        Binding("m", "mute_alerts", "Mute alerts"),
         Binding("q", "quit", "Quit"),
         *[Binding(str(d), f"digit({d})", "", show=False) for d in range(10)],
         Binding("right,right_square_bracket", "cycle_tab(1)", "Next tab", show=False),
         Binding("left,left_square_bracket", "cycle_tab(-1)", "Prev tab", show=False),
     ]
 
-    def __init__(self, monitor: Monitor, fps: float = 12.0) -> None:
+    def __init__(
+        self,
+        monitor: Monitor,
+        fps: float = 12.0,
+        alerts: bool = True,
+        alert_config: Optional[AlertConfig] = None,
+        bell: bool = False,
+    ) -> None:
         super().__init__()
         self.mon = monitor
         self.fps = max(0.0, min(60.0, fps))
+        cfg = alert_config or AlertConfig(temp_warn=monitor.cfg.temp_warn, interval_s=monitor.cfg.interval_s)
+        self.alert_center: Optional[AlertCenter] = AlertCenter(cfg) if alerts else None
+        self.bell_on_alert = bell
+        self._alerts_drawn = -1  # AlertCenter.version last rendered into the ALERTS panel
         self.gpu_idx = 0  # position of the shown GPU in the latest sample (resolved from gpu_uuid every sample)
         self.gpu_uuid: Optional[str] = None  # the selected GPU; survives other GPUs dropping out
         self._shown_uuid: Optional[str] = None  # GPU the per-GPU panels were last built for
@@ -236,6 +250,7 @@ class GpuDashboard(App[None]):
                 with Horizontal(classes="row"):
                     yield Panel("DIAGNOSIS", id="diag-full", classes="half")
                     with Vertical(classes="half", id="diag-side"):
+                        yield Panel("ALERTS · newest first · m mutes", id="alerts")
                         yield Panel("SYSTEM HEALTH", id="health-full")
                         yield Panel("TRUE USAGE · evidence", id="truth-d")
                 yield Panel("INSIGHTS · rules + engine findings", id="insights")
@@ -508,6 +523,43 @@ class GpuDashboard(App[None]):
         self.range_i = (self.range_i + 1) % len(RANGES)
         self.refresh_data(sample=False)
 
+    def action_mute_alerts(self) -> None:
+        center = self.alert_center
+        if center is None:
+            self.notify("Alerts are off (started with --no-alerts)", timeout=3)
+            return
+        muted = center.toggle_mute()
+        self.notify("Alerts muted for 1 hour (m to unmute)" if muted else "Alerts unmuted", timeout=3)
+        self._alerts_drawn = -1
+        self.refresh_data(sample=False)
+
+    def _alerts(self, s: Sample) -> None:
+        """Run the alert rules on a new sample (sample path only, never per frame); toast what fired."""
+        center = self.alert_center
+        if center is None:
+            return
+        new = center.process(s)
+        if not new or center.muted():
+            return
+        for a in new:
+            self._toast(a)
+
+    def _toast(self, a: Alert) -> None:
+        severity: Literal["warning", "information"] = "warning" if a.level == "warning" else "information"
+        self.notify(a.detail, title=a.title, severity=severity, timeout=10 if a.level == "warning" else 8, markup=False)
+        if self.bell_on_alert:
+            self.bell()
+
+    def draw_alerts(self, force: bool = False) -> None:
+        """Redraw the ALERTS panel (Diagnosis tab) when the list changed."""
+        center = self.alert_center
+        version = center.version if center else 0
+        if self.tab != "diagnosis" or (version == self._alerts_drawn and not force):
+            return
+        self._alerts_drawn = version
+        panel = self.query_one("#alerts", Panel)
+        panel.update(alerts_list(center, panel.inner_width))
+
     def action_export(self) -> None:
         name = f"gpu-pulse-history-{time.strftime('%Y%m%d-%H%M%S')}.csv"
         for folder in (Path.cwd(), Path.home()):  # cwd may be read-only (/, System32)
@@ -554,6 +606,8 @@ class GpuDashboard(App[None]):
         s = self.mon.tick() if sample else self.mon.latest
         if s is None:
             return
+        if sample:
+            self._alerts(s)
         if len(s.gpus) != self.n_gpus:  # first sample, or a GPU appeared / dropped out
             self.n_gpus = len(s.gpus)
             self._apply_layout()
@@ -575,6 +629,7 @@ class GpuDashboard(App[None]):
         self._header(s, g)
         self._rings(s, g, a)
         pages.live(self, s, g, a)
+        self.draw_alerts()
         if not self.fps and self.tab == "overview":
             self.pulse.step(self.mon.cfg.interval_s)
         self.wake()
@@ -619,6 +674,11 @@ class GpuDashboard(App[None]):
             right.append(f"{min(self.gpu_idx, len(s.gpus) - 1) + 1}/{len(s.gpus)} ", Style(color=R.MUTED))
         if self.specs and width >= 150:
             right.append(f"{self.specs.hostname} · ", Style(color=R.MUTED))
+        center = self.alert_center
+        if center is not None and center.muted():
+            right.append("alerts muted ", Style(color=R.MUTED))
+        elif center is not None and (n := center.active_count()):
+            right.append(f"▲ {n} alert{'s' if n > 1 else ''} ", Style(color=R.LEVEL_COLOR["warning"], bold=True))
         right.append("● ", Style(color=R.LEVEL_COLOR["good"]))
         right.append(f"{self.mon.cfg.interval_s:g}s", Style(color=R.MUTED))
         if self.fps and width >= 110:

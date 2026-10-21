@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { statusView } from './statusText';
+import { statusView, type AlertSummary } from './statusText';
 import type { Sample } from './types';
 
 /** Readable text changes slower than the dashboard samples; this caps status bar IPC. */
@@ -22,10 +22,10 @@ export class GpuStatusBar implements vscode.Disposable {
     else this.item.hide();
   }
 
-  update(s: Sample, tempWarn: number): void {
+  update(s: Sample, tempWarn: number, alerts?: AlertSummary): void {
     if (s.t - this.lastAt < MIN_UPDATE_MS && s.t >= this.lastAt) return;
     this.lastAt = s.t;
-    const v = statusView(s, tempWarn);
+    const v = statusView(s, tempWarn, alerts);
     // Each property write is a message to the renderer; only send what changed.
     if (v.text !== this.text) this.item.text = this.text = v.text;
     if (v.tooltip !== this.tooltip) {

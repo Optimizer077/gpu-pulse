@@ -57,7 +57,7 @@ async function main(): Promise<void> {
   // Real-data fixture for scripts/preview.html?real
   const init = initPayload({
     history, sample: sampler.latest, selected: undefined, vendor: sampler.vendor,
-    processes: sampler.processes, specs, tempWarn: 80, intervalMs: INTERVAL_MS,
+    processes: sampler.processes, specs, tempWarn: 80, intervalMs: INTERVAL_MS, alerts: [],
   });
   fs.writeFileSync(path.join(__dirname, 'preview-data.js'), `window.PREVIEW_INIT = ${JSON.stringify(init)};\n`);
   console.log('wrote dist/preview-data.js');

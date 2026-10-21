@@ -2,7 +2,7 @@
   "name": "gpu-pulse",
   "displayName": "GPU Pulse",
   "description": "Live GPU, CPU and memory dashboard with usage averages, utilization insights and machine specs. Works on Windows, Linux and Remote-SSH.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "gpu-pulse-dev",
   "license": "MIT",
   "repository": {
@@ -57,6 +57,14 @@
       {
         "command": "gpuPulse.exportHistory",
         "title": "GPU Pulse: Export Usage History (CSV)"
+      },
+      {
+        "command": "gpuPulse.muteAlerts",
+        "title": "GPU Pulse: Mute Alerts for 1 Hour"
+      },
+      {
+        "command": "gpuPulse.unmuteAlerts",
+        "title": "GPU Pulse: Unmute Alerts"
       }
     ],
     "viewsContainers": {
@@ -130,7 +138,46 @@
         "gpuPulse.temperatureWarning": {
           "type": "number",
           "default": 80,
-          "description": "GPU temperature (°C) at which the status bar and dashboard warn."
+          "description": "GPU temperature (°C) at which the status bar and dashboard warn, and the threshold of the \"running hot\" alert."
+        },
+        "gpuPulse.alerts.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show a notification when a GPU runs hot, fills its VRAM, sits idle while holding memory, or finishes a job. Alerts are evaluated on every sample, also while the dashboard and side bar are hidden — but only while sampling runs: with both `#gpuPulse.statusBar.enabled#` and `#gpuPulse.recordInBackground#` off, sampling pauses when no view is visible and no alerts are raised. Each alert fires once per episode, with a 30 min cooldown per alert and GPU."
+        },
+        "gpuPulse.alerts.hot": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Warn when a GPU stays at or above `#gpuPulse.temperatureWarning#` for 30 s (re-arms once it drops 3 °C below)."
+        },
+        "gpuPulse.alerts.vramFull": {
+          "type": "boolean",
+          "default": true,
+          "description": "Warn when a GPU's VRAM stays at or above 95% for 20 s (re-arms below 90%)."
+        },
+        "gpuPulse.alerts.idleHeld": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Notify when a GPU stays below 10% utilization while holding at least 50% of its VRAM for `#gpuPulse.alerts.idleHeldMinutes#` (often an open notebook or a finished script). Re-arms at 15% utilization or below 40% VRAM."
+        },
+        "gpuPulse.alerts.jobFinished": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Notify when a busy stretch (utilization at or above 15%, dips under 60 s bridged) of at least `#gpuPulse.alerts.jobFinishedMinutes#` ends with 60 s below 10%."
+        },
+        "gpuPulse.alerts.idleHeldMinutes": {
+          "type": "number",
+          "default": 15,
+          "minimum": 1,
+          "maximum": 240,
+          "description": "Minutes a GPU must be idle while holding VRAM before the idle alert fires."
+        },
+        "gpuPulse.alerts.jobFinishedMinutes": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 600,
+          "description": "Minimum length (minutes) of a busy stretch for the job-finished alert."
         }
       }
     }

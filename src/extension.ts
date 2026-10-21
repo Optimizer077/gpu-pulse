@@ -2,11 +2,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { AlertEngine, type Alert, type AlertConfig } from './alerts';
 import { fakeGpus } from './collectors/fake';
 import { collectSpecs } from './collectors/specs';
 import { HistoryStore } from './history';
 import { DashboardPanel, VIEW_TYPE, type DashboardSource } from './panel';
-import { TickComposer } from './payload';
+import { alertViews, TickComposer, type AlertView } from './payload';
 import { samplingPlan } from './rate';
 import { Sampler } from './sampler';
 import { SIDEBAR_VIEW, SidebarProvider } from './sidebar';
@@ -14,6 +15,11 @@ import { GpuStatusBar } from './statusBar';
 import type { Specs } from './types';
 
 const SAVE_EVERY_MS = 60_000;
+const MUTE_MS = 60 * 60_000;
+/** globalState key: epoch ms until which alert notifications are muted (shared by all windows). */
+const MUTE_KEY = 'gpuPulse.alertsMutedUntil';
+const OPEN_DASHBOARD = 'Open Dashboard';
+const MUTE_HOUR = 'Mute 1 hour';
 
 let saveHistory: (() => void) | undefined;
 
@@ -30,6 +36,15 @@ function cfg() {
     statusBar: c.get<boolean>('statusBar.enabled', true),
     nvidiaPath: c.get<string>('nvidiaSmiPath', ''),
     tempWarn: clamp(c.get<number>('temperatureWarning', 80), 30, 120, 80),
+    alerts: {
+      enabled: c.get<boolean>('alerts.enabled', true) !== false,
+      hot: c.get<boolean>('alerts.hot', true) !== false,
+      vramFull: c.get<boolean>('alerts.vramFull', true) !== false,
+      idleHeld: c.get<boolean>('alerts.idleHeld', true) !== false,
+      jobFinished: c.get<boolean>('alerts.jobFinished', true) !== false,
+      idleHeldMinutes: clamp(c.get<number>('alerts.idleHeldMinutes', 15), 1, 240, 15),
+      jobFinishedMinutes: clamp(c.get<number>('alerts.jobFinishedMinutes', 10), 1, 600, 10),
+    },
   };
 }
 
@@ -87,6 +102,41 @@ export function activate(ctx: vscode.ExtensionContext): GpuPulseApi {
   // One composer for every view: a sample is turned into one tick message, posted to each visible view.
   const composer = new TickComposer(history, () => conf.tempWarn);
 
+  // ---- alerts: evaluated on every sample, whether or not a view is visible ----
+  const alertConfig = (intervalMs: number): AlertConfig => ({ ...conf.alerts, tempWarn: conf.tempWarn, intervalMs });
+  const alerts = new AlertEngine(alertConfig(conf.slowMs));
+  const mutedUntil = () => {
+    const u = ctx.globalState.get<number>(MUTE_KEY, 0);
+    return typeof u === 'number' && u > Date.now() ? u : 0;
+  };
+  // The active list only changes when the engine's revision does; rebuild the views from it then.
+  let activeRev = -1;
+  let activeViews: AlertView[] = [];
+  let activeTitles: string[] = [];
+  const refreshActive = () => {
+    if (alerts.revision === activeRev) return false;
+    activeRev = alerts.revision;
+    const a = alerts.active();
+    activeViews = alertViews(a);
+    activeTitles = a.map((x) => x.title);
+    return true;
+  };
+  let postedAlertsRev = -1;
+  const notify = (a: Alert) => {
+    const until = mutedUntil();
+    log.appendLine(`[${new Date().toISOString()}] Alert ${a.rule} (${a.level}, GPU ${a.gpuIndex} ${a.gpuUuid})${until ? ' [muted]' : ''}: ${a.title} — ${a.detail}`);
+    if (until) return;
+    const text = `GPU Pulse: ${a.title}. ${a.detail}`;
+    const shown =
+      a.level === 'warning'
+        ? vscode.window.showWarningMessage(text, OPEN_DASHBOARD, MUTE_HOUR)
+        : vscode.window.showInformationMessage(text, OPEN_DASHBOARD, MUTE_HOUR);
+    void shown.then((pick) => {
+      if (pick === OPEN_DASHBOARD) void vscode.commands.executeCommand('gpuPulse.openDashboard');
+      else if (pick === MUTE_HOUR) void vscode.commands.executeCommand('gpuPulse.muteAlerts');
+    });
+  };
+
   const plan = () =>
     samplingPlan({
       dashboardVisible: !!DashboardPanel.current?.visible,
@@ -113,11 +163,16 @@ export function activate(ctx: vscode.ExtensionContext): GpuPulseApi {
       sidebar.sendInit();
     },
     viewLoaded: () => composer.invalidate(),
+    alerts: () => {
+      refreshActive();
+      return activeViews;
+    },
   };
 
   /** Fast while the dashboard or the side bar is visible (one sampler either way); slow or paused otherwise. */
   const applyRate = () => {
     const p = plan();
+    alerts.setConfig(alertConfig(p.intervalMs));
     sampler.setInterval(p.intervalMs);
     sampler.setProcessPolling(p.processes);
     if (p.run) void sampler.now();
@@ -129,10 +184,17 @@ export function activate(ctx: vscode.ExtensionContext): GpuPulseApi {
 
   sampler.onSample((s) => {
     history.add(s);
-    if (conf.statusBar) statusBar.update(s, conf.tempWarn);
+    for (const a of alerts.update(s)) notify(a);
+    refreshActive();
+    if (conf.statusBar) statusBar.update(s, conf.tempWarn, { active: activeTitles, mutedUntil: mutedUntil() });
     const panel = DashboardPanel.current?.visible ? DashboardPanel.current : undefined;
     if (!panel && !sidebar.visible) return;
     const msg = composer.tick(s, selected);
+    // Views that load later get the list in their init message; visible ones only when it changed.
+    if (postedAlertsRev !== activeRev) {
+      postedAlertsRev = activeRev;
+      msg.alerts = activeViews;
+    }
     panel?.pushTick(msg, s);
     sidebar.pushTick(msg);
   });
@@ -169,6 +231,19 @@ export function activate(ctx: vscode.ExtensionContext): GpuPulseApi {
     sidebar,
     vscode.window.registerWebviewViewProvider(SIDEBAR_VIEW, sidebar, { webviewOptions: { retainContextWhenHidden: false } }),
     // `<view id>.focus` is generated by VS Code; it reveals the view wherever the user moved it (left or right side bar).
+    vscode.commands.registerCommand('gpuPulse.muteAlerts', async () => {
+      const until = Date.now() + MUTE_MS;
+      await ctx.globalState.update(MUTE_KEY, until);
+      log.appendLine(`[${new Date().toISOString()}] Alerts muted until ${new Date(until).toISOString()}`);
+      void vscode.window.showInformationMessage(
+        `GPU Pulse alerts muted until ${new Date(until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`,
+      );
+    }),
+    vscode.commands.registerCommand('gpuPulse.unmuteAlerts', async () => {
+      await ctx.globalState.update(MUTE_KEY, undefined);
+      log.appendLine(`[${new Date().toISOString()}] Alerts unmuted`);
+      void vscode.window.showInformationMessage('GPU Pulse alerts unmuted.');
+    }),
     vscode.commands.registerCommand('gpuPulse.focusSidebar', () => vscode.commands.executeCommand(`${SIDEBAR_VIEW}.focus`)),
     vscode.commands.registerCommand('gpuPulse.exportHistory', async () => {
       // Reuse globalStorageUri's scheme/authority so the home dir resolves on the remote host under Remote-SSH.
@@ -195,13 +270,14 @@ export function activate(ctx: vscode.ExtensionContext): GpuPulseApi {
       applyRate();
     }),
   );
-  return { sidebarResolved: () => !!sidebar.view, sampler };
+  return { sidebarResolved: () => !!sidebar.view, sampler, alertsMuted: () => mutedUntil() > 0 };
 }
 
 /** Returned from activate(); used by the integration test. */
 export interface GpuPulseApi {
   sidebarResolved(): boolean;
   sampler: Sampler;
+  alertsMuted(): boolean;
 }
 
 export function deactivate(): void {

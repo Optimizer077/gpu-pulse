@@ -4,6 +4,8 @@
 // Host CPU is process.cpuUsage(); nvidia-smi CPU is read from the OS for the stream process.
 // Spawn-per-tick children exit too fast to read; their cost is reported as samples x measured per-spawn CPU if given
 // (--spawnCpuMs=26.6, measured separately with Start-Process/TotalProcessorTime).
+// The alert engine runs on every sample as in the extension; --alerts=off leaves it out for comparison.
+import { AlertEngine } from '../src/alerts';
 import { HistoryStore, toPoint } from '../src/history';
 import { analysis, TickComposer } from '../src/payload';
 import { Sampler } from '../src/sampler';
@@ -15,6 +17,7 @@ const mode = arg('mode', 'stream');
 const seconds = Number(arg('seconds', '20'));
 const interval = Number(arg('interval', '500'));
 const spawnCpuMs = Number(arg('spawnCpuMs', '0'));
+const withAlerts = arg('alerts', 'on') !== 'off'; // --alerts=off measures the path without the alert engine
 
 /** 24 h of minute buckets for 4 GPUs so window stats do realistic work. */
 function preload(h: HistoryStore, ids: string[]): void {
@@ -33,11 +36,23 @@ async function main(): Promise<void> {
   sampler.setProcessPolling(false); // identical in both modes; the process list is a separate 5 s query
   const history = new HistoryStore(7);
   const composer = new TickComposer(history, () => 80);
+  const alerts = new AlertEngine({
+    enabled: true, hot: true, vramFull: true, idleHeld: true, jobFinished: true,
+    tempWarn: 80, idleHeldMinutes: 15, jobFinishedMinutes: 10, intervalMs: interval,
+  });
+  let alertRev = -1;
   let n = 0;
   let bytes = 0;
   sampler.onSample((s: Sample) => {
     n++;
     history.add(s);
+    if (withAlerts) {
+      alerts.update(s); // same per-sample work as the extension host
+      if (alerts.revision !== alertRev) {
+        alertRev = alerts.revision;
+        alerts.active();
+      }
+    }
     const id = s.gpus[0]?.uuid;
     const msg =
       mode === 'legacy'
@@ -64,7 +79,7 @@ async function main(): Promise<void> {
   const childMs = child0 !== null && child1 !== null ? child1 - child0 : spawnCpuMs ? samples * spawnCpuMs : null;
   const pct = (ms: number) => +((ms / wall) * 100).toFixed(2);
   console.log(JSON.stringify({
-    mode: `${mode} (${sampler.mode})`, intervalMs: interval, wallS: +(wall / 1000).toFixed(1), samples,
+    mode: `${mode} (${sampler.mode})`, alerts: withAlerts, intervalMs: interval, wallS: +(wall / 1000).toFixed(1), samples,
     samplesPerSec: +(samples / (wall / 1000)).toFixed(2),
     hostCpuMs: +hostMs.toFixed(0), hostPctOfCore: pct(hostMs), hostMsPerSample: +(hostMs / samples).toFixed(2),
     nvidiaSmiCpuMs: childMs === null ? null : +childMs.toFixed(0), nvidiaSmiPctOfCore: childMs === null ? null : pct(childMs),
