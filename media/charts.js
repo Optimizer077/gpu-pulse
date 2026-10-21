@@ -52,15 +52,19 @@
   // ---- shared animation loop (runs only while something is moving) ----
   const animating = new Set();
   let raf = 0;
-  function loop() {
+  function loop(now) {
     raf = 0;
-    for (const c of [...animating]) if (!c.step()) animating.delete(c);
+    for (const c of [...animating]) if (!c.step(now)) animating.delete(c);
     if (animating.size) raf = requestAnimationFrame(loop);
   }
   function animate(c) {
     animating.add(c);
     if (!raf) raf = requestAnimationFrame(loop);
   }
+  // Gauge tweens are time-based and finish before the next sample arrives, so the RAF loop idles between ticks.
+  let animMs = 300;
+  function setAnimMs(ms) { animMs = Math.max(100, Math.min(400, ms)); }
+  const ease = (k) => 1 - Math.pow(1 - k, 3);
 
   const START = Math.PI * 0.75, SWEEP = Math.PI * 1.5;
 
@@ -68,23 +72,37 @@
   class Gauge {
     constructor(canvas, opt) {
       this.canvas = canvas;
-      this.opt = Object.assign({ max: 100, color: 's-gpu', glow: 'glow-gpu', ticks: 50, warn: null, big: false }, opt);
+      this.opt = Object.assign({ max: 100, color: 's-gpu', glow: 'glow-gpu', ticks: 50, warn: null, big: false, mini: false }, opt);
       this.value = 0;
       this.target = 0;
       this.marker = null;
+      this.tween = null;
       new ResizeObserver(() => this.draw()).observe(canvas);
     }
+    /** No-op when nothing changed; tiny changes jump without animating. */
     set(v, marker) {
-      this.target = v == null ? 0 : Math.max(0, Math.min(this.opt.max, v));
-      this.marker = marker == null ? null : Math.max(0, Math.min(this.opt.max, marker));
-      if (reduceMotion) { this.value = this.target; this.draw(); } else animate(this);
+      const o = this.opt;
+      const t = v == null ? 0 : Math.max(0, Math.min(o.max, v));
+      const m = marker == null ? null : Math.max(0, Math.min(o.max, marker));
+      if (t === this.target && m === this.marker) return;
+      this.marker = m;
+      if (t === this.target) { if (!this.tween) this.draw(); return; }
+      this.target = t;
+      if (reduceMotion || o.mini || Math.abs(t - this.value) < o.max * 0.006) {
+        this.tween = null; this.value = t; animating.delete(this); this.draw(); return;
+      }
+      this.tween = { from: this.value, t0: performance.now() };
+      animate(this);
     }
     setMax(m) { if (m && m !== this.opt.max) { this.opt.max = m; this.draw(); } }
-    step() {
-      const d = this.target - this.value;
-      this.value = Math.abs(d) < this.opt.max * 0.002 ? this.target : this.value + d * 0.14;
+    step(now) {
+      const tw = this.tween;
+      if (!tw) return false;
+      const k = Math.min(1, Math.max(0, ((now || performance.now()) - tw.t0) / animMs));
+      this.value = tw.from + (this.target - tw.from) * ease(k);
+      if (k >= 1) { this.value = this.target; this.tween = null; }
       this.draw();
-      return this.value !== this.target;
+      return !!this.tween;
     }
     draw() {
       const { ctx, w, h } = fit(this.canvas);
@@ -92,12 +110,12 @@
       const o = this.opt;
       const cx = w / 2, cy = h * 0.54;
       const r = Math.min(w / 2, h * 0.54) * 0.84;
-      const lw = Math.max(5, r * (o.big ? 0.085 : 0.1));
+      const lw = o.mini ? Math.max(4, r * 0.16) : Math.max(5, r * (o.big ? 0.085 : 0.1));
       const col = tokens[o.color], glow = tokens[o.glow] || col;
       const frac = this.value / o.max;
 
       // tick ring
-      for (let i = 0; i <= o.ticks; i++) {
+      for (let i = 0; o.ticks > 0 && i <= o.ticks; i++) {
         const a = START + (SWEEP * i) / o.ticks;
         const major = i % 5 === 0;
         const lit = i / o.ticks <= frac + 1e-6 && frac > 0;
@@ -139,7 +157,7 @@
           grad.addColorStop(1, rgba(col, 0.55));
         } else grad = col;
         ctx.save();
-        if (!isLight()) { ctx.shadowColor = rgba(glow, 0.75); ctx.shadowBlur = o.big ? 22 : 14; }
+        if (!isLight()) { ctx.shadowColor = rgba(glow, 0.75); ctx.shadowBlur = o.big ? 22 : o.mini ? 8 : 14; }
         ctx.beginPath();
         ctx.arc(cx, cy, r, START, end);
         ctx.strokeStyle = grad;
@@ -155,11 +173,13 @@
       }
 
       // inner hairline ring
-      ctx.beginPath();
-      ctx.arc(cx, cy, r - lw * 1.6, START, START + SWEEP);
-      ctx.strokeStyle = tokens.hair;
-      ctx.lineWidth = 1;
-      ctx.stroke();
+      if (!o.mini) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, r - lw * 1.6, START, START + SWEEP);
+        ctx.strokeStyle = tokens.hair;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
 
       // marker (window average)
       if (this.marker != null) {
@@ -177,6 +197,27 @@
     }
   }
 
+  /** First index with p[0] >= t (points sorted by time). */
+  function lowerBound(points, t) {
+    let lo = 0, hi = points.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (points[mid][0] < t) lo = mid + 1; else hi = mid; }
+    return lo;
+  }
+
+  /** Keep the min and max point per pixel column: same envelope, far fewer path segments. */
+  function decimate(run, X) {
+    const out = [];
+    let col = NaN, lo = null, hi = null;
+    const flush = () => { if (!lo) return; if (lo === hi) out.push(lo); else if (lo[0] < hi[0]) out.push(lo, hi); else out.push(hi, lo); };
+    for (const p of run) {
+      const c = Math.round(X(p[0]));
+      if (c !== col) { flush(); col = c; lo = hi = p; }
+      else { if (p[1] < lo[1]) lo = p; if (p[1] > hi[1]) hi = p; }
+    }
+    flush();
+    return out;
+  }
+
   /** Time-series area chart on a single 0–max axis with crosshair tooltip. */
   class LineChart {
     constructor(canvas, opt) {
@@ -185,12 +226,17 @@
       this.points = [];
       this.hover = null;
       this.tip = opt.tip;
+      this.pending = 0;
       new ResizeObserver(() => this.draw()).observe(canvas);
-      canvas.addEventListener('mousemove', (e) => { this.hover = e; this.draw(); });
-      canvas.addEventListener('mouseleave', () => { this.hover = null; this.tip.hide(); this.draw(); });
+      canvas.addEventListener('mousemove', (e) => { this.hover = e; this.requestDraw(); });
+      canvas.addEventListener('mouseleave', () => { this.hover = null; this.tip.hide(); this.requestDraw(); });
     }
-    setData(points) { this.points = points; this.draw(); }
-    setRange(ms) { this.opt.rangeMs = ms; this.draw(); }
+    setData(points) { this.points = points; this.requestDraw(); }
+    setRange(ms) { this.opt.rangeMs = ms; this.requestDraw(); }
+    /** Coalesce data, range and hover updates into at most one draw per frame (none while hidden). */
+    requestDraw() {
+      if (!this.pending) this.pending = requestAnimationFrame(() => { this.pending = 0; this.draw(); });
+    }
     draw() {
       const { ctx, w, h } = fit(this.canvas);
       if (!w || !h) return;
@@ -223,7 +269,7 @@
         ctx.fillText(lbl, Math.min(w - R - 10, Math.max(L + 10, X(t))), T + ph + 6);
       }
 
-      const pts = this.points.filter((p) => p[0] >= t0 - 2000);
+      const pts = this.points.slice(lowerBound(this.points, t0 - 2000));
       ctx.save();
       ctx.beginPath(); ctx.rect(L, T - 4, pw, ph + 8); ctx.clip();
       for (const s of o.series) {
@@ -239,7 +285,8 @@
           if (v != null) run.push([pts[i][0], v]);
         }
         if (run.length) runs.push(run);
-        for (const r of runs) {
+        for (const r0 of runs) {
+          const r = r0.length > pw ? decimate(r0, X) : r0;
           if (s.fill) {
             const g = ctx.createLinearGradient(0, T, 0, T + ph);
             g.addColorStop(0, rgba(col, isLight() ? 0.22 : 0.34));
@@ -408,5 +455,5 @@
   }
 
   readTokens();
-  window.Pulse = { Gauge, LineChart, Heatmap, spark, makeTip, readTokens, tokens, heatColor };
+  window.Pulse = { Gauge, LineChart, Heatmap, spark, makeTip, readTokens, tokens, heatColor, setAnimMs };
 })();

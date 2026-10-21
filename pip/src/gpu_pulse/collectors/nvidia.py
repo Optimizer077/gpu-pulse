@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from typing import Any, Callable, Optional
 
 from ..models import GpuDetails, GpuProcess, GpuSample
@@ -56,6 +57,8 @@ _TENSOR_GEN = {
 _CORES_PER_SM = {(8, 6): 128, (8, 9): 128, (12, 0): 128}
 _COMPUTE_MODES = {0: "default", 1: "exclusive thread", 2: "prohibited", 3: "exclusive process"}
 PCIE_POLL_S = 2.0  # nvmlDeviceGetPcieThroughput blocks ~20-30 ms, so it runs off the sample path
+PCIE_MAX_DUTY = 0.25  # with many GPUs one poll round grows: keep the poller busy at most 25% of the time
+SLOW_FIELDS_S = 2.0  # fan speed and the energy counter (the slowest per-sample calls) refresh this often
 # GPU Performance Monitoring metrics ("true usage"), NVML suffix -> GpuSample field.
 _GPM_FIELDS: tuple[tuple[str, str], ...] = (
     ("SM_UTIL", "sm_active"),
@@ -229,6 +232,8 @@ class NvidiaCollector:
         self._pcie_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._gpm: list[Optional[_Gpm]] = []
+        # GPU position -> (monotonic read time, fan %, energy J, wall-clock read time)
+        self._slow_cache: dict[int, tuple[float, Optional[float], Optional[float], float]] = {}
 
     def detect(self) -> bool:
         if nv is None:
@@ -269,11 +274,13 @@ class NvidiaCollector:
 
     def _pcie_loop(self) -> None:
         while not self._stop.is_set():
+            t0 = time.monotonic()
             try:
                 self.poll_pcie_once()
             except Exception as e:  # noqa: BLE001 - a polling hiccup must not kill the thread silently
                 logger.debug("PCIe throughput poll failed: %s", e)
-            self._stop.wait(self._pcie_poll_s)
+            busy = time.monotonic() - t0  # ~60 ms per GPU: 8 GPUs take ~0.5 s per round
+            self._stop.wait(max(self._pcie_poll_s, busy * (1 - PCIE_MAX_DUTY) / PCIE_MAX_DUTY))
 
     def _ensure_pcie_poller(self) -> None:
         if self._pcie_thread is None and self._handles and self._pcie_poll_s > 0:
@@ -292,6 +299,7 @@ class NvidiaCollector:
         tx, rx = self._pcie[i] if i < len(self._pcie) else (None, None)
         gpm = self._gpm[i] if i < len(self._gpm) else None
         true_usage = gpm.read() if gpm is not None else {}
+        fan, energy, energy_t = self._slow_fields(i, h)
         return GpuSample(
             index=i,
             uuid=self._uuids[i],
@@ -307,7 +315,7 @@ class NvidiaCollector:
             clock_mhz=_f(_q(nv.nvmlDeviceGetClockInfo, h, nv.NVML_CLOCK_GRAPHICS)),
             clock_max_mhz=self._max_clock[i],
             mem_clock_mhz=_f(_q(nv.nvmlDeviceGetClockInfo, h, nv.NVML_CLOCK_MEM)),
-            fan_pct=_f(_q(nv.nvmlDeviceGetFanSpeed, h)),
+            fan_pct=fan,
             pstate=f"P{pstate}" if pstate is not None else None,
             pcie_gen=int(gen) if gen is not None else None,
             pcie_width=int(width) if width is not None else None,
@@ -316,7 +324,8 @@ class NvidiaCollector:
             dec_util=_f(dec[0]) if dec else None,
             pcie_tx_bps=tx,
             pcie_rx_bps=rx,
-            energy_j=_f(_qn("nvmlDeviceGetTotalEnergyConsumption", h), 1000),  # millijoules
+            energy_j=energy,
+            energy_t=energy_t if energy is not None else None,
             sm_active=true_usage.get("sm_active"),
             sm_occupancy=true_usage.get("sm_occupancy"),
             tensor_active=true_usage.get("tensor_active"),
@@ -326,6 +335,18 @@ class NvidiaCollector:
             fp64_active=true_usage.get("fp64_active"),
             int_active=true_usage.get("int_active"),
         )
+
+    def _slow_fields(self, i: int, h: Any) -> tuple[Optional[float], Optional[float], float]:
+        """(fan %, energy J, wall time the energy was read): the two slowest per-GPU reads (~0.3 ms
+        together), refreshed every 2 s. The read time travels with the cached energy so session
+        energy isn't computed against the (later) sample time."""
+        now = time.monotonic()
+        cached = self._slow_cache.get(i)
+        if cached is None or now - cached[0] >= SLOW_FIELDS_S:
+            fan = _f(_q(nv.nvmlDeviceGetFanSpeed, h))
+            energy = _f(_qn("nvmlDeviceGetTotalEnergyConsumption", h), 1000)  # millijoules
+            cached = self._slow_cache[i] = (now, fan, energy, time.time())
+        return cached[1], cached[2], cached[3]
 
     def sample(self) -> tuple[GpuSample, ...]:
         self._ensure_pcie_poller()

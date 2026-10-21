@@ -16,7 +16,8 @@ from . import render as R
 KEYS = (
     ("1 – 5", "Overview · GPU · System · History · Diagnosis"),
     ("← →  [ ]", "previous / next tab"),
-    ("g", "next GPU (multi-GPU machines)"),
+    ("g / G", "next / previous GPU (multi-GPU machines); click a line in ALL GPUS to pick one"),
+    ("g then 0 – 9", "jump to the GPU with that index (as nvidia-smi numbers them); g 1 2 → GPU 12"),
     ("r", "timeline range: 1 / 5 / 15 / 60 min"),
     ("e", "export per-minute history as CSV"),
     ("?", "this help · Esc closes"),
@@ -37,6 +38,8 @@ METRICS = (
     ("Throttle", "Clock limits reported by the driver right now, e.g. POWER CAP or THERMAL."),
     ("◆ marker", "On the GPU ring: the 1-hour average utilization."),
     ("Pulse", "Heartbeat whose rate and height follow GPU utilization."),
+    ("All GPUs", "One line per GPU: bright bar = SM activity, dim = kernel running but SMs idle. Cross-GPU "
+     "checks flag stragglers, uneven VRAM, a GPU throttling alone and mismatched PCIe links."),
     ("Rings", "Temperature turns amber 10 °C below the warning threshold and red at it; power turns amber "
      "while the power cap throttles clocks."),
 )  # fmt: skip

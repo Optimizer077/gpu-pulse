@@ -17,6 +17,104 @@ export function grade(util: number | null): Grade | null {
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
+/** One GPU's recent averages, for comparing GPUs with each other. */
+export interface FleetEntry {
+  uuid: string;
+  index: number;
+  util: number | null; // mean % over the fleet window
+  vram: number | null; // mean VRAM % over the fleet window
+  covered: number; // minutes with data in the window
+  tempC: number | null; // live
+}
+
+export const FLEET_WINDOW_MIN = 10;
+const FLEET_MIN_COVERED = 3;
+const LEVEL_ORDER: Record<Insight['level'], number> = { critical: 0, serious: 1, warning: 2, info: 3, good: 4 };
+
+/** Stable sort so critical items lead. */
+export function bySeverity(list: Insight[]): Insight[] {
+  return list
+    .map((x, i) => [x, i] as const)
+    .sort((a, b) => LEVEL_ORDER[a[0].level] - LEVEL_ORDER[b[0].level] || a[1] - b[1])
+    .map(([x]) => x);
+}
+
+const gpuList = (xs: FleetEntry[]) => {
+  const ids = xs.map((x) => x.index);
+  return ids.length === 1 ? `GPU ${ids[0]}` : `GPUs ${ids.slice(0, -1).join(', ')} and ${ids[ids.length - 1]}`;
+};
+
+/**
+ * Observations that need more than one GPU: one GPU far below the others while they are
+ * busy, uneven memory, heat on a GPU other than the one being viewed. The data cannot say
+ * whether the GPUs share a job, so the wording names both readings.
+ */
+export function buildFleetInsights(fleet: FleetEntry[], selected: string | undefined, tempWarn: number): Insight[] {
+  const out: Insight[] = [];
+  if (fleet.length < 2) return out;
+
+  for (const f of fleet) {
+    if (f.uuid !== selected && f.tempC !== null && f.tempC >= tempWarn) {
+      out.push({
+        level: 'critical',
+        title: `GPU ${f.index} running hot: ${Math.round(f.tempC)} °C`,
+        detail: `At or above your ${tempWarn} °C threshold. Select GPU ${f.index} above for details.`,
+      });
+    }
+  }
+
+  const ready = fleet.filter((f): f is FleetEntry & { util: number } => f.util !== null && f.covered >= FLEET_MIN_COVERED);
+  if (ready.length < 2) return out;
+  const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  // State the data actually behind each claim (3–10 recorded minutes), not the nominal window.
+  const span = (fs: FleetEntry[]) => Math.min(FLEET_WINDOW_MIN, ...fs.map((f) => f.covered));
+  const lastMin = (fs: FleetEntry[]) => `Last ${span(fs)} recorded min`;
+
+  // A GPU is lagging when the others average >= 50% and it sits under half of that, at least 25 points lower.
+  const lagging = ready.filter((f) => {
+    const others = mean(ready.filter((o) => o !== f).map((o) => o.util));
+    return others >= 50 && f.util < others * 0.5 && others - f.util >= 25;
+  });
+  if (lagging.length && lagging.length < ready.length) {
+    const rest = ready.filter((f) => !lagging.includes(f));
+    const restMean = Math.round(mean(rest.map((f) => f.util)));
+    const lagText = lagging.map((f) => `GPU ${f.index} ${Math.round(f.util)}%`).join(', ');
+    out.push({
+      level: 'warning',
+      title: `${gpuList(lagging)} well below the others`,
+      detail:
+        `${lastMin(ready)}: ${lagText} vs ${restMean}% mean on the other GPUs. ` +
+        'If one job spans these GPUs (e.g. data-parallel training), this fits a straggler, an uneven data split, ' +
+        'or a rank that is not using its GPU. If they run separate jobs, it is expected.',
+    });
+  } else if (ready.length === fleet.length && ready.every((f) => f.util >= 70)) {
+    out.push({
+      level: 'good',
+      title: `All ${fleet.length} GPUs kept busy`,
+      detail: `${lastMin(ready)}, means: ${ready.map((f) => `GPU ${f.index} ${Math.round(f.util)}%`).join(', ')}.`,
+    });
+  }
+
+  const withMem = ready.filter((f): f is typeof f & { vram: number } => f.vram !== null);
+  const inUse = ready.filter((f) => f.util >= 20).length;
+  if (withMem.length >= 2 && inUse >= 2) {
+    const hi = withMem.reduce((a, b) => (b.vram > a.vram ? b : a));
+    const lo = withMem.reduce((a, b) => (b.vram < a.vram ? b : a));
+    if (hi.vram >= 50 && hi.vram - lo.vram >= 30) {
+      out.push({
+        level: 'info',
+        title: 'Uneven memory across GPUs',
+        detail:
+          `${lastMin(withMem)}: GPU ${hi.index} averaged ${Math.round(hi.vram)}% VRAM, GPU ${lo.index} ${Math.round(lo.vram)}%. ` +
+          (hi.index === 0
+            ? 'In data-parallel jobs rank 0 often holds extra state (gathered outputs, logging); a large gap can also mean an unbalanced model split.'
+            : 'A large gap can mean an unbalanced model or data split, or different jobs on each GPU.'),
+      });
+    }
+  }
+  return out;
+}
+
 /**
  * Plain-language observations about the last hour. Thresholds are deliberately
  * conservative and every message says what was measured, not why.

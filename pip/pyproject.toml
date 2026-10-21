@@ -1,6 +1,6 @@
 [project]
 name = "gpu-pulse"
-version = "0.1.0"
+version = "0.2.0"
 description = "Terminal GPU dashboard: live usage, 5m/30m/1h/24h averages, utilization insights and machine specs."
 readme = "README.md"
 requires-python = ">=3.9"

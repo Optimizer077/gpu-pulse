@@ -70,6 +70,7 @@ async def main() -> None:
     p.add_argument("out", type=Path)
     p.add_argument("--demo", action="store_true")
     p.add_argument("--live-demo", action="store_true", help="use the app's --demo mode (simulated GPU)")
+    p.add_argument("--demo-gpus", type=int, default=1, help="with --live-demo: number of simulated GPUs")
     p.add_argument("--size", default="160x62")
     p.add_argument("--keys", default="", help="comma-separated keys to press before the capture")
     p.add_argument("--wait", type=float, default=4.0, help="seconds to let the dashboard run first")
@@ -82,7 +83,9 @@ async def main() -> None:
     probe.close()
     if args.demo:
         seed(hist, uuid)
-    mon = Monitor(MonitorConfig(history_path=hist, persist=False, interval_s=0.5, demo=args.live_demo))
+    mon = Monitor(
+        MonitorConfig(history_path=hist, persist=False, interval_s=0.5, demo=args.live_demo, demo_gpus=args.demo_gpus)
+    )
     app = GpuDashboard(mon)
     async with app.run_test(size=(w, h)) as pilot:
         await pilot.pause(args.wait)

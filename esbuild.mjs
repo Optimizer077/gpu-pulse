@@ -19,6 +19,9 @@ const builds = [
 if (args.has('--smoke')) {
   builds.push({ ...common, entryPoints: ['scripts/smoke.ts'], outfile: 'dist/smoke.js' });
 }
+if (args.has('--bench')) {
+  builds.push({ ...common, entryPoints: ['scripts/bench-sampler.ts'], outfile: 'dist/bench.js' });
+}
 
 if (args.has('--watch')) {
   for (const b of builds) await (await esbuild.context(b)).watch();

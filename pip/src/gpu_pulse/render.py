@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from datetime import datetime
+from functools import lru_cache
 from typing import Optional
 
 from rich.color import Color
@@ -43,16 +44,25 @@ EIGHTHS_H = " ▏▎▍▌▋▊▉█"
 EIGHTHS_V = " ▁▂▃▄▅▆▇█"
 
 
+@lru_cache(maxsize=256)
 def _rgb(hex_: str) -> tuple[int, int, int]:
     c = Color.parse(hex_).get_truecolor()
     return c.red, c.green, c.blue
 
 
+@lru_cache(maxsize=8192)
 def mix(a: str, b: str, t: float) -> str:
+    """Blend two ``#rrggbb`` colours (``t`` 0 = a, 1 = b). Cached: charts reuse the same stops every frame."""
     x, y = _rgb(a), _rgb(b)
     t = max(0.0, min(1.0, t))
     red, green, blue = (round(p + (q - p) * t) for p, q in zip(x, y))
     return f"#{red:02x}{green:02x}{blue:02x}"
+
+
+@lru_cache(maxsize=4096)
+def style(color: Optional[str] = None, bold: bool = False, bgcolor: Optional[str] = None) -> Style:
+    """Shared, cached Rich style: building ``Style`` objects per cell dominated chart rendering."""
+    return Style(color=color, bold=bold, bgcolor=bgcolor)
 
 
 def heat_color(v: float) -> str:
@@ -96,14 +106,15 @@ def bar(frac: Optional[float], width: int, color: str, glow: str) -> Text:
     cells = f * width
     full = int(cells)
     out = Text()
+    span = max(1, width - 1)
     for i in range(full):
-        out.append("█", Style(color=mix(color, glow, i / max(1, width - 1))))
+        out.append("█", style(mix(color, glow, i / span)))
     rem = int((cells - full) * 8)
     if full < width:
         if rem:
-            out.append(EIGHTHS_H[rem], Style(color=mix(color, glow, full / max(1, width - 1)), bgcolor=TRACK))
+            out.append(EIGHTHS_H[rem], style(mix(color, glow, full / span), bgcolor=TRACK))
             full += 1
-        out.append(" " * (width - full), Style(bgcolor=TRACK))
+        out.append(" " * (width - full), style(bgcolor=TRACK))
     return out
 
 
@@ -132,37 +143,51 @@ def area_chart(
     """Filled area chart from vertical eighth-blocks; brighter toward the top like a glow."""
     label_w = 5 if axis else 0
     cols = resample(values, max(1, width - label_w))
+    levels = [None if v is None else max(0.0, min(1.0, v / max_v)) * height for v in cols]
     lines = Text()
+    track = style(TRACK)
     for row in range(height):
         top = height - row  # rows counted from the bottom, 1-based
         if axis:
             lab = {0: f"{max_v:.0f}%", height // 2: f"{max_v / 2:.0f}%", height - 1: "0%"}.get(row, "")
-            lines.append(f"{lab:>4} ", Style(color=MUTED))
-        shade = mix(color, glow, 1 - row / max(1, height - 1))
-        for v in cols:
-            if v is None:
-                lines.append("·" if row == height - 1 else " ", Style(color=TRACK))
+            lines.append(f"{lab:>4} ", style(MUTED))
+        shade = style(mix(color, glow, 1 - row / max(1, height - 1)))
+        gap = "·" if row == height - 1 else " "
+        chars: list[str] = []
+        styles: list[Style] = []
+        for level in levels:
+            if level is None:
+                chars.append(gap)
+                styles.append(track)
                 continue
-            level = max(0.0, min(1.0, v / max_v)) * height
             if level >= top:
-                lines.append("█", Style(color=shade))
+                chars.append("█")
             elif level > top - 1:
-                lines.append(EIGHTHS_V[max(1, int((level - (top - 1)) * 8))], Style(color=shade))
+                chars.append(EIGHTHS_V[max(1, int((level - (top - 1)) * 8))])
             else:
-                lines.append(" ")
+                chars.append(" ")
+            styles.append(shade)
+        append_runs(lines, chars, styles)
         if row < height - 1:
             lines.append("\n")
     return lines
 
 
+def append_runs(out: Text, chars: Sequence[str], styles: Sequence[Optional[Style]]) -> None:
+    """Append ``chars`` with one span per run of identical style (far fewer spans to render)."""
+    start, n = 0, len(chars)
+    for i in range(1, n + 1):
+        if i == n or styles[i] is not styles[start]:
+            out.append("".join(chars[start:i]), styles[start])
+            start = i
+
+
 def sparkline(values: Sequence[Optional[float]], width: int, color: str, max_v: float = 100.0) -> Text:
-    out = Text()
-    for v in resample(values, width):
-        if v is None:
-            out.append(" ")
-        else:
-            out.append(EIGHTHS_V[max(1, round(max(0.0, min(1.0, v / max_v)) * 8))], Style(color=color))
-    return out
+    chars = [
+        " " if v is None else EIGHTHS_V[max(1, round(max(0.0, min(1.0, v / max_v)) * 8))]
+        for v in resample(values, width)
+    ]
+    return Text("".join(chars), style(color))
 
 
 def heatmap(

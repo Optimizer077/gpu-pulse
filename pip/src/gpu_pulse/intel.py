@@ -242,7 +242,12 @@ def _diagnose(
 
     calls: list[Call] = gpu_calls(gf, temp_warn) if gf else []
     if gf is None and has_gpu:
-        calls += minute_calls(history.stats("5 min", 5, uuid, now))
+        mc = minute_calls(history.stats("5 min", 5, uuid, now))
+        # Minute averages can predate what the GPU is doing right now (e.g. just after start).
+        # Never let them claim "idle" / "VRAM held idle" while the live reading shows it working.
+        if live is not None and (live.util or 0) >= ACTIVE_UTIL:
+            mc = [c for c in mc if c.bottleneck not in ("idle", "vram_held")]
+        calls += mc
     sys_calls = system_calls(sf, gf, input_conf)
     if any(c.bottleneck == "cpu" for c in sys_calls):
         calls = [c for c in calls if c.bottleneck != "cpu"]  # raw-sample CPU rule beats the minute one
@@ -389,11 +394,19 @@ def _session(history: HistoryStore, uuid: Optional[str], now: float, rows: Seque
 
 def _energy(rows: Sequence[GRow], start: float, flushed_to: float, minute_wh: float) -> Optional[float]:
     """Session energy: NVML's energy counter when raw samples cover the start, else minute power means
-    plus raw power for the not-yet-flushed minute."""
-    first = next(((s.t, g.energy_j) for s, g in rows if g.energy_j is not None), None)
-    last = next(((s.t, g.energy_j) for s, g in reversed(rows) if g.energy_j is not None), None)
+    plus raw power for the not-yet-flushed minute.
+
+    The collector caches the counter for a few seconds, so each reading is timed by ``energy_t`` (when
+    it was read), not by the sample carrying it; the stretch after the last read is filled in from raw
+    power so the newest seconds are not dropped.
+    """
+    first = next(((g.energy_t or s.t, g.energy_j) for s, g in rows if g.energy_j is not None), None)
+    last = next(((g.energy_t or s.t, g.energy_j) for s, g in reversed(rows) if g.energy_j is not None), None)
     if first and last and first[0] < last[0] and first[0] <= start + 90 and last[1] >= first[1]:
-        return round((last[1] - first[1]) / 3600, 2)
+        after = [g.power_w for s, g in rows if s.t > last[0] and g.power_w is not None]
+        gap = rows[-1][0].t - last[0]
+        since_read = sum(after) / len(after) * gap / 3600 if after and gap > 0 else 0.0
+        return round((last[1] - first[1]) / 3600 + since_read, 2)
     times = [s.t for s, _ in rows]
     tail = [(s.t, g.power_w) for s, g in rows[bisect.bisect_left(times, flushed_to) :] if g.power_w is not None]
     extra = 0.0

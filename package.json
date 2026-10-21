@@ -2,7 +2,7 @@
   "name": "gpu-pulse",
   "displayName": "GPU Pulse",
   "description": "Live GPU, CPU and memory dashboard with usage averages, utilization insights and machine specs. Works on Windows, Linux and Remote-SSH.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "gpu-pulse-dev",
   "license": "MIT",
   "repository": {
@@ -43,6 +43,11 @@
       {
         "command": "gpuPulse.openDashboard",
         "title": "GPU Pulse: Open Dashboard",
+        "icon": "$(graph)"
+      },
+      {
+        "command": "gpuPulse.focusSidebar",
+        "title": "GPU Pulse: Show in Side Bar",
         "icon": "$(pulse)"
       },
       {
@@ -54,15 +59,44 @@
         "title": "GPU Pulse: Export Usage History (CSV)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "gpuPulse",
+          "title": "GPU Pulse",
+          "icon": "media/sidebar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "gpuPulse": [
+        {
+          "type": "webview",
+          "id": "gpuPulse.sidebar",
+          "name": "Live",
+          "icon": "media/sidebar-icon.svg",
+          "contextualTitle": "GPU Pulse"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "gpuPulse.openDashboard",
+          "when": "view == gpuPulse.sidebar",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "GPU Pulse",
       "properties": {
         "gpuPulse.sampleIntervalMs": {
           "type": "number",
-          "default": 1000,
+          "default": 500,
           "minimum": 250,
           "maximum": 10000,
-          "description": "Sampling interval while the dashboard is visible (milliseconds)."
+          "description": "Sampling interval while the dashboard is visible (milliseconds). NVIDIA GPUs are read through one long-lived nvidia-smi process, so short intervals stay cheap."
         },
         "gpuPulse.backgroundIntervalMs": {
           "type": "number",
@@ -108,6 +142,7 @@
     "test": "vitest run",
     "test:integration": "node esbuild.mjs && node test/integration/run.mjs",
     "smoke": "node esbuild.mjs --smoke && node dist/smoke.js",
+    "bench": "node esbuild.mjs --bench && node dist/bench.js",
     "vscode:prepublish": "node esbuild.mjs --production",
     "package": "vsce package --no-dependencies"
   },

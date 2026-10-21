@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<!-- Dev-only harness for the side bar view (media/sidebar.js). Same parameters as preview.html
+     (?gpus=4, &light, &hc, &interval=250, &static, &bench=10). Size the window to the side bar width, e.g. 260 or 420 px. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="../media/dashboard.css">
+<link rel="stylesheet" href="../media/sidebar.css">
+<title>GPU Pulse side bar preview</title>
+<script src="preview-host.js"></script>
+</head>
+<body class="vscode-dark">
+<script>
+  const q = new URLSearchParams(location.search);
+  if (q.has('light')) document.body.className = 'vscode-light';
+  if (q.has('hc')) document.body.className = 'vscode-high-contrast';
+  // &w=260 simulates the side bar width (headless browsers have a ~500 px minimum window width).
+  if (q.get('w')) document.body.style.cssText = `width:${Number(q.get('w'))}px;overflow:hidden;outline:1px dashed #8884`;
+</script>
+<div id="app"></div>
+<script src="../media/charts.js"></script>
+<script src="../media/sidebar.js"></script>
+</body>
+</html>

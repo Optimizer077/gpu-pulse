@@ -15,6 +15,7 @@ from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -238,6 +239,22 @@ class HistoryStore:
             i -= 1
 
     # ---- queries ----
+    def recent_since(self, t0: float) -> list[Sample]:
+        """Raw samples with ``t >= t0``, oldest first, without walking the whole hour."""
+        out: list[Sample] = []
+        for s in reversed(self.recent):
+            if s.t < t0:
+                break
+            out.append(s)
+        out.reverse()
+        return out
+
+    def recent_last(self, n: int) -> list[Sample]:
+        """The newest ``n`` raw samples, oldest first (no copy of the full deque)."""
+        out = list(islice(reversed(self.recent), max(0, n)))
+        out.reverse()
+        return out
+
     def stats(self, label: str, minutes: int, gpu: Optional[str], now: Optional[float] = None) -> WindowStats:
         to = minute_start((now if now is not None else time.time()) * 1000)
         frm = to - (minutes - 1) * MINUTE_MS

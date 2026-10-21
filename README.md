@@ -36,6 +36,9 @@ Live GPU, CPU and memory dashboards with usage history, *true* GPU utilization, 
 | System health (CPU, RAM, disk, network) | CPU and RAM | ✅ Everything |
 | GPU architecture card | Specs | ✅ Cores, Tensor gen, bandwidth, TFLOPS, PCIe |
 | Status bar / one-shot output | ✅ Status bar | ✅ `gpu-pulse status` |
+| Pinned side-bar monitor | ✅ Activity Bar view, movable to the right side | n/a |
+| Multiple GPUs | ✅ All-GPUs strip, aggregate status bar, cross-GPU insights | ✅ ALL GPUS panel, per-GPU diagnosis, cross-GPU findings |
+| CPU cost (measured, see [Efficiency](#efficiency)) | ~0.2–0.6% of a core at 500 ms | ~5% on the Overview, ~0.5–1% on other tabs |
 
 Both read the same kind of data, apply the same insight rules, and record history in a compatible per-minute format.
 
@@ -58,6 +61,11 @@ Both read the same kind of data, apply the same insight rules, and record histor
 
 <sub>Screenshots use <code>gpu-pulse --demo</code>, which simulates a training workload so that every panel has data.</sub>
 
+### Multiple GPUs
+
+<img src="docs/images/terminal-multigpu.png" alt="Terminal dashboard with four GPUs">
+<sub><code>gpu-pulse --demo --demo-gpus 4</code>: the ALL GPUS panel flags GPU 1 as a possible straggler (if the GPUs run one job), GPU 2 as thermal-throttling on its own, and GPU 3 on a narrower PCIe link with 92% VRAM.</sub>
+
 ### VS Code extension
 
 <table>
@@ -66,6 +74,10 @@ Both read the same kind of data, apply the same insight rules, and record histor
 <td width="50%"><img src="docs/images/vscode-dashboard-light.png" alt="VS Code dashboard, light theme"></td>
 </tr>
 <tr><td colspan="2"><sub>Follows your VS Code theme. Shows live gauges, a timeline with hover readouts, usage windows, a 24-hour heatmap, insights, CPU and memory, processes and machine specs.</sub></td></tr>
+<tr>
+<td width="70%"><img src="docs/images/vscode-multigpu.png" alt="VS Code dashboard with four GPUs"><br><sub><b>All GPUs</b> strip with selectable cards; insights compare the GPUs.</sub></td>
+<td width="30%" valign="top"><img src="docs/images/vscode-sidebar.png" alt="Pinned side-bar view"><br><sub><b>Side bar</b>: pin it next to your editor or chat panel.</sub></td>
+</tr>
 </table>
 
 ---
@@ -78,13 +90,13 @@ Download from **[Releases](https://github.com/Optimizer077/gpu-pulse/releases/la
 
 | File | Install |
 |---|---|
-| `gpu-pulse-0.1.0.vsix` | `code --install-extension gpu-pulse-0.1.0.vsix`, or in VS Code: Extensions → `…` → **Install from VSIX…** |
-| `gpu_pulse-0.1.0-py3-none-any.whl` | `pip install gpu_pulse-0.1.0-py3-none-any.whl` or `uv tool install gpu_pulse-0.1.0-py3-none-any.whl` |
+| `gpu-pulse-0.2.0.vsix` | `code --install-extension gpu-pulse-0.2.0.vsix`, or in VS Code: Extensions → `…` → **Install from VSIX…** |
+| `gpu_pulse-0.2.0-py3-none-any.whl` | `pip install gpu_pulse-0.2.0-py3-none-any.whl` or `uv tool install gpu_pulse-0.2.0-py3-none-any.whl` |
 
 You can also install the terminal tool straight from GitHub:
 
 ```bash
-pip install "https://github.com/Optimizer077/gpu-pulse/releases/download/v0.1.0/gpu_pulse-0.1.0-py3-none-any.whl"
+pip install "https://github.com/Optimizer077/gpu-pulse/releases/download/v0.2.0/gpu_pulse-0.2.0-py3-none-any.whl"
 # or the latest source
 pip install "git+https://github.com/Optimizer077/gpu-pulse.git#subdirectory=pip"
 ```
@@ -110,6 +122,8 @@ gpu-pulse status     # one-shot snapshot (great over SSH)
 
 In VS Code: open the Command Palette → **GPU Pulse: Open Dashboard**, or click `GPU 37% · 5.1/16 GB · 54°C` in the status bar.
 
+**Pin it to the side:** click the GPU Pulse icon in the Activity Bar (or run **GPU Pulse: Show in Side Bar**). To keep it visible next to your editor or a chat panel, drag the view to the **Secondary Side Bar** on the right (View → Appearance → Secondary Side Bar).
+
 ---
 
 ## Features
@@ -125,6 +139,12 @@ In VS Code: open the Command Palette → **GPU Pulse: Open Dashboard**, or click
 - **24-hour heatmap:** one cell per minute in clock-aligned rows, with your overnight gaps visible at a glance.
 - **Sessions:** training runs are detected automatically, with duration, average utilization, peak VRAM and **energy used (Wh)**.
 - **Persistent history:** saved per minute, survives restarts, merges safely when several windows or processes record at once, and exports to CSV.
+
+### Multiple GPUs
+- **Overview of every GPU at once:** cards (VS Code) or one line per GPU (terminal) with utilization (and SM activity in the terminal), VRAM, temperature, power, throttling and health. Select any GPU for its detailed view.
+- **Aggregate status bar:** e.g. `GPU ×4 avg 67% · max 98% · hottest 71°C`, with a per-GPU tooltip.
+- **Cross-GPU findings:** a GPU well below its siblings (possible straggler or uneven data split), uneven VRAM, one GPU throttling alone, a GPU on a narrower PCIe link. They're worded for the common case of one data-parallel job; separate jobs per GPU make the differences expected.
+- **History and CSV export** are kept per GPU.
 
 ### Understanding the GPU
 - **Architecture card:** Blackwell, Ada, Ampere and so on, compute capability, CUDA cores, SMs, Tensor Core generation, memory bus, bandwidth, FP32 TFLOPS, power limits, VBIOS, driver and CUDA version.
@@ -187,6 +207,23 @@ The dashboard always shows which basis it used: **SM activity** or **utilization
 
 ---
 
+## Efficiency
+
+A monitor shouldn't cost much of what it measures. These figures come from one machine (RTX 5060 Ti, Core Ultra 7 265F, Windows 11) and are expressed as a share of one CPU core. Yours will differ.
+
+| | 0.1.0 | 0.2.0 | How |
+|---|---|---|---|
+| VS Code extension, sampling at 500 ms | ~5.7% (at 1 s) | **~0.2–0.6%** | One long-lived `nvidia-smi -lms` stream instead of a new process per sample; analysis at most every 2 s; DOM and canvas updates only on change |
+| Terminal dashboard, Overview, idle GPU (rings settled; pulse strip still animating) | ~57% | **~5%** (3.5–6.7%) | Rings stop redrawing once they reach their value; a ring only shimmers after a visible move; only changed rows repaint |
+| Terminal dashboard, Overview, 4 GPUs, everything moving (demo) | ~65% | **~5–10%** | Direct line rendering with cached styles, 12 fps default |
+| Terminal dashboard, other tabs | ~2% | **~0.5–1%** | Animation pauses off the Overview |
+
+Most of the terminal Overview's remaining cost is the always-animating pulse strip; a lower `--fps` reduces it.
+
+Reproduce: `npm run bench` (extension sampler) and `cd pip && uv run --with psutil python scripts/bench.py` (terminal dashboard). Lower `--fps` (or `--fps 0`) and a larger `gpuPulse.sampleIntervalMs` reduce cost further.
+
+---
+
 ## Usage
 
 ### Terminal dashboard (`gpu-pulse`)
@@ -203,12 +240,13 @@ The dashboard always shows which basis it used: **SM activity** or **utilization
 | Option | Default | Meaning |
 |---|---|---|
 | `-i, --interval` | `0.5` | Seconds between samples (minimum 0.1) |
-| `--fps` | `20` | Animation frame rate; `0` turns animation off, which helps on slow SSH links |
+| `--fps` | `12` | Animation frame rate; `0` turns animation off, which helps on slow SSH links |
 | `--demo` | off | Simulated GPU load; nothing is saved and the real host name is hidden |
+| `--demo-gpus N` | `1` | With `--demo`: simulate N GPUs (1–16), including a straggler |
 | `--history PATH` | per-user data dir | Custom history file |
 | `--temp-warn` | `80` | Temperature warning threshold (°C) |
 
-**Keys:** `1`–`5` or `←`/`→` switch tabs (Overview, GPU, System, History, Diagnosis) · `?` help with metric definitions · `g` next GPU · `r` timeline range · `e` export CSV · `q` quit
+**Keys:** `1`–`5` or `←`/`→` switch tabs (Overview, GPU, System, History, Diagnosis) · `?` help with metric definitions · `g` / `G` next / previous GPU (or `g` then a GPU number, or click a GPU line) · `r` timeline range · `e` export CSV · `q` quit
 
 #### Record history all the time
 
@@ -250,13 +288,14 @@ The dashboard and the logger can run at the same time. Saves merge per minute un
 | Command | What it does |
 |---|---|
 | **GPU Pulse: Open Dashboard** | Open the live dashboard (also: click the status bar item) |
+| **GPU Pulse: Show in Side Bar** | Reveal the compact pinned view (drag it to the Secondary Side Bar to keep it on the right) |
 | **GPU Pulse: Export Usage History (CSV)** | Save per-minute history |
 | **GPU Pulse: Clear Usage History** | Delete recorded history (asks first) |
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `gpuPulse.sampleIntervalMs` | `1000` | Sampling interval while the dashboard is visible |
-| `gpuPulse.backgroundIntervalMs` | `5000` | Sampling interval while it's hidden |
+| `gpuPulse.sampleIntervalMs` | `500` | Sampling interval while the dashboard or side bar is visible (minimum 250) |
+| `gpuPulse.backgroundIntervalMs` | `5000` | Sampling interval while both are hidden |
 | `gpuPulse.recordInBackground` | `true` | Keep recording while the dashboard is closed (turn off on laptops so the GPU can sleep) |
 | `gpuPulse.historyDays` | `7` | Days of per-minute history to keep |
 | `gpuPulse.statusBar.enabled` | `true` | Show `GPU % · VRAM · °C` in the status bar |
@@ -273,7 +312,7 @@ The dashboard and the logger can run at the same time. Saves merge per minute un
 flowchart LR
     subgraph Sources
         NVML["NVIDIA NVML<br/>util · VRAM · power · clocks<br/>throttle reasons · GPM true usage"]
-        SMI["nvidia-smi<br/>(VS Code extension)"]
+        SMI["nvidia-smi -lms stream<br/>(VS Code extension)"]
         SYS["psutil / OS<br/>CPU · RAM · swap · disk · net"]
         AMD["amdgpu sysfs<br/>(Linux)"]
     end
@@ -290,8 +329,8 @@ flowchart LR
 
 | | Terminal dashboard | VS Code extension |
 |---|---|---|
-| GPU data | NVML via `nvidia-ml-py` (≈0.5 ms per sample incl. GPM) | `nvidia-smi --query-gpu` |
-| UI | Textual + Rich, braille ring gauges | Webview, Canvas 2D, bundled fonts, no CDN |
+| GPU data | NVML via `nvidia-ml-py` (≈0.1 ms per GPU per sample incl. GPM) | One long-lived `nvidia-smi --query-gpu … -lms` stream (auto-restart, polling fallback) |
+| UI | Textual + Rich, braille ring gauges drawn as cached line strips | Webview (dashboard tab + side-bar view), Canvas 2D, bundled fonts, no CDN |
 | History file | `%LOCALAPPDATA%\gpu-pulse\history.json` (Windows), `~/.local/share/gpu-pulse/history.json` (Linux) | VS Code global storage on the GPU machine |
 
 **Privacy:** everything stays on your machine. No telemetry, no network calls. The serial number is never read.
@@ -349,7 +388,7 @@ Use `gpu-pulse --fps 10`, or `--fps 0` to turn animation off. Values still updat
 ├── src/, media/, test/     VS Code extension (TypeScript, esbuild, vitest)
 ├── pip/                    Terminal dashboard (Python, Textual, uv)
 │   ├── src/gpu_pulse/      collectors, history, intelligence engine, UI
-│   └── tests/              140 tests
+│   └── tests/              193 tests
 ├── scripts/                preview page, icon, smoke test
 └── docs/images/            README visuals
 ```
@@ -374,9 +413,10 @@ Open `scripts/preview.html` in a browser to iterate on the VS Code dashboard wit
 ## Roadmap
 
 - True-usage metrics and the full diagnosis engine in the VS Code extension
+- Alerts, such as "GPU idle for 15 min while VRAM is held" or "training job finished"
+- Per-process GPU attribution on Linux (which PID uses how much SM / VRAM)
 - Publish to the VS Code Marketplace and PyPI
 - Intel Arc / AMD utilization on Windows
-- Alerts, such as "GPU idle for 15 min while VRAM is held"
 
 ## License
 

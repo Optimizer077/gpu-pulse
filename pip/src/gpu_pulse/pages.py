@@ -6,7 +6,7 @@ Only the visible page is rebuilt; switching tabs triggers a full refresh of the 
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from rich.console import Group
 from rich.style import Style
@@ -16,12 +16,13 @@ from textual.widgets import Static
 from . import cards as C
 from . import panels as P
 from . import render as R
-from .models import GpuSample, Sample
+from .fleetview import fleet_columns, fleet_panel, short_name
+from .models import GpuSample, Insight, Sample
 from .monitor import Analysis
-from .widgets import Panel, PulseStrip, RingGauge
+from .widgets import Panel, PulseStrip, RingGauge, set_border
 
 if TYPE_CHECKING:
-    from .app import GpuDashboard
+    from .app import FleetPanel, GpuDashboard
 
 RANGES = (60, 300, 900, 3600)
 
@@ -44,7 +45,8 @@ def rings(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> 
         for rid in ("vram", "temp", "power"):
             q(f"#ring-{rid}", RingGauge).set_target(None, "n/a")
     else:
-        gpu.border_title = f"GPU · {g.name.replace('NVIDIA GeForce ', '').replace('NVIDIA ', '')}"
+        label = f"GPU {g.index}" if len(s.gpus) > 1 else "GPU"
+        set_border(gpu, title=f"{label} · {short_name(g.name)}")
         caption = f"SM {g.sm_active:.0f}%" if g.sm_active is not None else "utilization"
         sub = f"1h avg {hour.util:.0f}%" if hour.util is not None else ""
         side = [("1h avg", _pct(hour.util)), ("peak", _pct(hour.util_peak))]
@@ -116,7 +118,7 @@ def rings(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> 
 
 # ---- live panels (every sample) ------------------------------------------------------------
 def _series(app: GpuDashboard, s: Sample, g: Optional[GpuSample], rng: int) -> dict[str, list[Optional[float]]]:
-    pts = [x for x in app.mon.history.recent if x.t >= s.t - rng]
+    pts = app.mon.history.recent_since(s.t - rng)
     uid = g.uuid if g else None
     picked = [next((y for y in x.gpus if y.uuid == uid), None) for x in pts]
     out: dict[str, list[Optional[float]]] = {
@@ -159,10 +161,17 @@ def live(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
     L = app.layout_plan
     if app.tab == "overview":
         app.query_one(PulseStrip).util = g.util if g else None
+        if app.fleet_lines:
+            fp = cast("FleetPanel", app.query_one("#fleet"))
+            width = fp.inner_width if fp.size.width else app.fleet_width
+            if fleet_columns(len(s.gpus), width) != fleet_columns(len(s.gpus), app.fleet_width):
+                app.fit_fleet(width)  # the page's scrollbar changed the width: plan lines for the real one
+            body, fp.hits = fleet_panel(s.gpus, app.gpu_idx, app.fleet, width, app.mon.cfg.temp_warn, app.fleet_lines)
+            fp.update(body)
         rng = RANGES[app.range_i]
         if L.columns >= 2:
             tl = _panel(app, "timeline")
-            tl.border_title = f"GPU TIMELINE · last {rng // 60}m (r)"
+            set_border(tl, title=f"GPU TIMELINE · last {rng // 60}m (r)")
             tl.update(P.timeline(_series(app, s, g, rng), g, tl.inner_width, tl.inner_height))
         truth = _panel(app, "truth" if L.columns == 3 else "truth-r")
         cols = _truth_cols(1 if L.columns == 3 else 2, truth.inner_width)
@@ -173,7 +182,7 @@ def live(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
             lo.update(P.gpu_live(g, lo.inner_width))
         if L.show_bottom:
             io = _panel(app, "io")
-            io.update(P.io_block(list(app.mon.history.recent)[-240:], s, io.inner_width, io.inner_height))
+            io.update(P.io_block(app.mon.history.recent_last(240), s, io.inner_width, io.inner_height))
         arch = app.query_one("#ov-arch", Static)
         if arch.display:
             line = Text("▍", Style(color=R.GPU))
@@ -186,16 +195,21 @@ def live(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
         tg.update(P.true_usage(g, tg.inner_width, _truth_rows(g, 1), 1))
         tr = _panel(app, "gpu-trace")
         rng = RANGES[app.range_i]
-        tr.border_title = f"TRACES · last {rng // 60}m (r) · 0–100% scale"
+        set_border(tr, title=f"TRACES · last {rng // 60}m (r) · 0–100% scale")
         tr.update(P.gpu_traces(_series(app, s, g, rng), tr.inner_width, tr.inner_height))
     elif app.tab == "system":
-        recent = list(app.mon.history.recent)[-int(300 / app.mon.cfg.interval_s) :]
+        recent = app.mon.history.recent_last(int(300 / app.mon.cfg.interval_s))
         cpu = _panel(app, "cpu")
         threads = app.specs.cpu_threads if app.specs else None
         cpu.update(P.cpu_block(recent, s, cpu.inner_width, cpu.inner_height, threads))
         io = _panel(app, "io-s")
-        io.border_title = "DISK & NETWORK · last 5 min, shared scale per device"
+        set_border(io, title="DISK & NETWORK · last 5 min, shared scale per device")
         io.update(P.io_block(recent, s, io.inner_width, io.inner_height))
+
+
+def _tag(app: GpuDashboard, s: Sample, g: Optional[GpuSample]) -> str:
+    """Title suffix naming the selected GPU on multi-GPU machines."""
+    return f" · GPU {g.index}" if g is not None and len(s.gpus) > 1 else ""
 
 
 # ---- slow panels (every ~2 s) --------------------------------------------------------------
@@ -205,12 +219,14 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
     grade = a.grade[0] if a.grade else None
     uid = g.uuid if g else None
     tab = app.tab
+    extra: tuple[Insight, ...] = app.fleet.findings if app.fleet else ()  # cross-GPU findings
     if tab in ("overview", "history"):
         start, cells = app.mon.history.heatmap(uid, hours=25)
     if tab == "overview":
         diag = _panel(app, "diag")
-        diag.border_subtitle = f"score {d.score}/100" if d.score is not None else ""
-        diag.update(C.diagnosis_card(d, a, g, diag.inner_width, diag.inner_height))
+        set_border(diag, title=f"DIAGNOSIS{_tag(app, s, g)}")
+        set_border(diag, subtitle=f"score {d.score}/100" if d.score is not None else "")
+        diag.update(C.diagnosis_card(d, a, g, diag.inner_width, diag.inner_height, extra))
         rows = C.health_rows(d, s, g, app.mon.cfg.temp_warn, grade)
         problems = [r for r in rows if r.level in ("warning", "serious", "critical")]
         note = f"▲ {len(problems)} need attention" if problems else "✔ all clear"
@@ -222,7 +238,7 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
         health_h = (math.ceil(len(rows) / 2) if packed else len(rows)) + 2
         for pid in ("health", "health-r"):
             hp = _panel(app, pid)
-            hp.border_subtitle = note
+            set_border(hp, subtitle=note)
             two = packed if pid == "health" else False
             hp.update(C.health_grid(rows, hp.inner_width, detail=hp.inner_width >= 30, columns=2 if two else 1))
         _panel(app, "health").styles.height = health_h
@@ -238,10 +254,11 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
             )
     elif tab == "gpu":
         arch = _panel(app, "arch")
+        set_border(arch, title=f"GPU ARCHITECTURE{_tag(app, s, g)}")
         arch.update(P.arch_card(app.detail_for(g), g, arch.inner_width))
         procs = _panel(app, "procs")
         mine = [p for p in app.mon.processes if not g or p.gpu_uuid == g.uuid]
-        procs.border_title = f"GPU PROCESSES · {len(mine)}"
+        set_border(procs, title=f"GPU PROCESSES · {len(mine)}")
         if app.mon.vendor != "nvidia" and not app.mon.cfg.demo:
             procs.update(Text("Process listing needs an NVIDIA GPU (NVML).", Style(color=R.MUTED)))
         elif not mine:
@@ -253,6 +270,7 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
             wp = _panel(app, f"win{i}")
             wp.update(P.window_card(w, cells[-w.minutes :], wp.inner_width, wp.inner_height))
         heat = _panel(app, "heat")
+        set_border(heat, title=f"24-HOUR ACTIVITY{_tag(app, s, g)} · one cell per minute")
         col_w = 2 if heat.inner_width >= 126 else 1
         tall = app.layout_plan.height - 2 - app.query_one("#wins").outer_size.height >= 32
         _, sm = app.mon.history.heatmap(uid, hours=25, metric="sm")
@@ -265,15 +283,16 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
         heat.update(Group(*parts))
         runs = C.find_sessions(start, cells)
         sp = _panel(app, "sessions")
-        sp.border_title = f"SESSIONS · last 24 h · {len(runs)}"
+        set_border(sp, title=f"SESSIONS · last 24 h · {len(runs)}")
         head = C.session_line(getattr(d, "session", None))
         body = C.sessions_table(runs, sp.inner_width, 12)
         sp.update(Group(head, Text(), body) if head is not None else body)
     elif tab == "diagnosis":
         df = _panel(app, "diag-full")
+        set_border(df, title=f"DIAGNOSIS{_tag(app, s, g)}")
         df.update(C.diagnosis_detail(d, a, g, df.inner_width))
         hf = _panel(app, "health-full")
         hf.update(C.health_grid(C.health_rows(d, s, g, app.mon.cfg.temp_warn, grade), hf.inner_width))
-        _panel(app, "insights").update(C.insights_list(C.merged_insights(a, d)))
+        _panel(app, "insights").update(C.insights_list(C.merged_insights(a, d, extra)))
         td = _panel(app, "truth-d")
         td.update(P.true_usage(g, td.inner_width, _truth_rows(g, 1), 1))
