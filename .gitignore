@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.vscode-test/
+*.vsix
+# Local working notes and scratch output
+plan/
+release/
+*.out
+# Python (pip/)
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

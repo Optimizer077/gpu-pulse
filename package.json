@@ -1,0 +1,116 @@
+{
+  "name": "gpu-pulse",
+  "displayName": "GPU Pulse",
+  "description": "Live GPU, CPU and memory dashboard with usage averages, utilization insights and machine specs. Works on Windows, Linux and Remote-SSH.",
+  "version": "0.1.0",
+  "publisher": "gpu-pulse-dev",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "gpu",
+    "nvidia",
+    "cuda",
+    "monitor",
+    "nvidia-smi",
+    "machine learning",
+    "system monitor"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onWebviewPanel:gpuPulse.dashboard"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "gpuPulse.openDashboard",
+        "title": "GPU Pulse: Open Dashboard",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "gpuPulse.clearHistory",
+        "title": "GPU Pulse: Clear Usage History"
+      },
+      {
+        "command": "gpuPulse.exportHistory",
+        "title": "GPU Pulse: Export Usage History (CSV)"
+      }
+    ],
+    "configuration": {
+      "title": "GPU Pulse",
+      "properties": {
+        "gpuPulse.sampleIntervalMs": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 250,
+          "maximum": 10000,
+          "description": "Sampling interval while the dashboard is visible (milliseconds)."
+        },
+        "gpuPulse.backgroundIntervalMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "Sampling interval while the dashboard is hidden. Usage history keeps recording at this rate."
+        },
+        "gpuPulse.recordInBackground": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep recording usage history while the dashboard is closed. Turn off on laptops to let a discrete GPU sleep (the status bar, if enabled, still polls)."
+        },
+        "gpuPulse.historyDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "maximum": 30,
+          "description": "How many days of per-minute usage history to keep."
+        },
+        "gpuPulse.statusBar.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show live GPU usage in the status bar."
+        },
+        "gpuPulse.nvidiaSmiPath": {
+          "type": "string",
+          "default": "",
+          "description": "Custom path to nvidia-smi. Leave empty to search PATH and standard install locations."
+        },
+        "gpuPulse.temperatureWarning": {
+          "type": "number",
+          "default": 80,
+          "description": "GPU temperature (°C) at which the status bar and dashboard warn."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:integration": "node esbuild.mjs && node test/integration/run.mjs",
+    "smoke": "node esbuild.mjs --smoke && node dist/smoke.js",
+    "vscode:prepublish": "node esbuild.mjs --production",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.24.0",
+    "systeminformation": "^5.23.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
