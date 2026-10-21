@@ -5,6 +5,14 @@
   "version": "0.1.0",
   "publisher": "gpu-pulse-dev",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Optimizer077/gpu-pulse.git"
+  },
+  "homepage": "https://github.com/Optimizer077/gpu-pulse#readme",
+  "bugs": {
+    "url": "https://github.com/Optimizer077/gpu-pulse/issues"
+  },
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.85.0"

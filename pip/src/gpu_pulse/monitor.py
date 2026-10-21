@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -138,7 +138,10 @@ class Monitor:
         if self._specs is None:
             names = tuple(g.name for g in (self.latest.gpus if self.latest else ()))
             driver, cuda = self.nvidia.driver_info()
-            self._specs = collect_specs(names, driver, cuda)
+            specs = collect_specs(names, driver, cuda)
+            if self.cfg.demo:  # demo screenshots get shared: don't show the real machine's name
+                specs = replace(specs, hostname="gpu-pulse-demo")
+            self._specs = specs
         return self._specs
 
     def gpu_details(self) -> list[GpuDetails]:

@@ -23,6 +23,12 @@ dependencies = [
     "platformdirs>=4.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/Optimizer077/gpu-pulse"
+Source = "https://github.com/Optimizer077/gpu-pulse/tree/main/pip"
+Issues = "https://github.com/Optimizer077/gpu-pulse/issues"
+Releases = "https://github.com/Optimizer077/gpu-pulse/releases"
+
 [project.scripts]
 gpu-pulse = "gpu_pulse.cli:main"
 
