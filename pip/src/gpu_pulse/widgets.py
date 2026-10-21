@@ -453,7 +453,11 @@ class PulseStrip(Widget):
                  border-subtitle-color: #7d8696; padding: 0 1; }
     """
 
-    COLUMNS_PER_S = 36  # scroll speed in dot columns per second
+    # Scroll speed in dot columns per second. An idle GPU gets a slow "resting pulse": the trace
+    # scrolls (and repaints) ~4 times a second instead of every frame, which is most of the
+    # Overview's cost on an idle machine. Speed follows the smoothed utilization up to full rate.
+    COLUMNS_PER_S = 36
+    RESTING_COLUMNS_PER_S = 4
 
     def __init__(self, **kw) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kw)
@@ -466,7 +470,7 @@ class PulseStrip(Widget):
 
     def step(self, dt: float) -> bool:
         """Scroll the trace; returns True when it moved (and a repaint was requested)."""
-        self._carry += dt * self.COLUMNS_PER_S
+        self._carry += dt * self.columns_per_s()
         n = int(self._carry)
         if not n:
             return False
@@ -476,6 +480,13 @@ class PulseStrip(Widget):
         w, h = self.content_size
         self.refresh(Region(0, 0, w, h))  # content rows only: the border's cached lines stay valid
         return True
+
+    def columns_per_s(self) -> float:
+        # Busy-ness from the live reading or the wave's smoothed level, whichever is higher, so a
+        # job starting speeds the trace up at once instead of after the smoothing catches up.
+        busy = max(self.wave.level, min(1.0, (self.util or 0.0) / 100))
+        rest = self.RESTING_COLUMNS_PER_S
+        return rest + (self.COLUMNS_PER_S - rest) * min(1.0, busy / 0.3)
 
     def render_line(self, y: int) -> Strip:
         w, h = self.content_size

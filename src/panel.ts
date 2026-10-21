@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { HistoryStore, minuteStart } from './history';
-import { HEATMAP_HOURS, initPayload, resolveGpu, type TickMessage } from './payload';
+import { HEATMAP_HOURS, initPayload, resolveGpu, type AlertView, type TickMessage } from './payload';
 import type { Sampler } from './sampler';
 import type { Sample, Specs } from './types';
 import { webviewHtml, webviewOptions } from './webviewHtml';
@@ -21,6 +21,8 @@ export interface DashboardSource {
   select(uuid: string | undefined): void;
   /** A view (re)loaded: its next tick must carry analysis. */
   viewLoaded(): void;
+  /** Active alerts (badge in the dashboard header and the side bar). */
+  alerts(): AlertView[];
 }
 
 export class DashboardPanel implements vscode.Disposable {
@@ -85,6 +87,7 @@ export class DashboardPanel implements vscode.Disposable {
         specs: this.src.specs(),
         tempWarn: this.src.tempWarn(),
         intervalMs: this.src.intervalMs(),
+        alerts: this.src.alerts(),
       }),
     );
   }

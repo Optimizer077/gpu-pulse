@@ -62,6 +62,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider, vscode.Dispo
         specs: undefined,
         tempWarn: this.src.tempWarn(),
         intervalMs: this.src.intervalMs(),
+        alerts: this.src.alerts(),
         compact: true,
       }),
     );

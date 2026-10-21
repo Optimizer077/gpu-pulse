@@ -8,6 +8,28 @@ export interface StatusView {
   warn: boolean;
 }
 
+/** Alert state shown in the tooltip (the status bar text never changes for alerts). */
+export interface AlertSummary {
+  /** Titles of alerts whose condition still holds. */
+  active: string[];
+  /** Epoch ms until which notifications are muted, or 0. */
+  mutedUntil: number;
+}
+
+const hhmm = (t: number) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+/** Tooltip lines for active alerts and the mute state; empty when there is nothing to say. */
+export function alertLines(a: AlertSummary | undefined, now = Date.now()): string {
+  if (!a) return '';
+  let out = '';
+  if (a.active.length) {
+    const n = a.active.length;
+    out += `$(bell) **${n} active alert${n > 1 ? 's' : ''}**\n\n` + a.active.map((t) => `- ${t}\n`).join('') + '\n';
+  }
+  if (a.mutedUntil > now) out += `$(bell-slash) Alerts muted until ${hhmm(a.mutedUntil)}\n\n`;
+  return out;
+}
+
 const dash = (v: number | null | undefined, d = 0) => (v === null || v === undefined ? '–' : v.toFixed(d));
 const shortName = (n: string) => n.replace(/^NVIDIA (GeForce )?/, '');
 
@@ -20,7 +42,7 @@ function cpuLine(s: Sample): string {
   return `$(dashboard) CPU ${Math.round(s.cpu.util)}% · RAM ${ram}%\n\n`;
 }
 
-export function statusView(s: Sample, tempWarn: number): StatusView {
+export function statusView(s: Sample, tempWarn: number, alerts?: AlertSummary): StatusView {
   const gs = s.gpus;
   if (!gs.length) {
     return { text: `$(pulse) CPU ${Math.round(s.cpu.util)}%`, tooltip: 'GPU Pulse — no GPU detected. Click to open the dashboard.', warn: false };
@@ -37,6 +59,7 @@ export function statusView(s: Sample, tempWarn: number): StatusView {
       '**GPU Pulse**\n\n' +
       `$(circuit-board) ${g.name} — ${dash(g.util)}% util, ${vramGb(g)}, ${dash(g.tempC)} °C, ${dash(g.powerW)} W\n\n` +
       cpuLine(s) +
+      alertLines(alerts, s.t) +
       '_Click to open the dashboard_';
     return { text: `$(pulse) GPU ${dash(g.util)}%${vram}${temp}`, tooltip, warn };
   }
@@ -56,6 +79,7 @@ export function statusView(s: Sample, tempWarn: number): StatusView {
     rows.join('\n') +
     '\n\n' +
     cpuLine(s) +
+    alertLines(alerts, s.t) +
     '_Click to open the dashboard_';
   return { text, tooltip, warn };
 }

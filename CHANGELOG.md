@@ -2,6 +2,32 @@
 
 CPU figures are measured on one machine (RTX 5060 Ti, Core Ultra 7 265F, Windows 11) and expressed as a share of one CPU core. Your numbers will differ.
 
+## 0.3.0
+
+### Alerts (both tools, same rules)
+- **Running hot:** temperature ≥ your warning threshold for 30 s. Clears 3 °C below it.
+- **VRAM nearly full:** ≥ 95% for 20 s. Clears below 90%.
+- **VRAM held while idle:** utilization < 10% with VRAM ≥ 50% for 15 min (configurable).
+- **Job finished:** a busy stretch of ≥ 10 min (configurable) ends. Reports the duration and average utilization.
+- Each alert fires once, re-arms only after its condition clears, and repeats at most every 30 min per GPU. Gaps in the data reset the timers, so stale samples never trigger alerts.
+
+### VS Code extension
+- Non-modal notifications with **Open Dashboard** and **Mute 1 hour**.
+- New commands: `GPU Pulse: Mute Alerts` / `Unmute Alerts`.
+- An alert badge in the dashboard and side bar; active alerts listed in the status-bar tooltip.
+- Settings: `gpuPulse.alerts.enabled`, `.hot`, `.vramFull`, `.idleHeld`, `.jobFinished`, `.idleHeldMinutes`, `.jobFinishedMinutes`.
+- Alerts work with the dashboard closed, as long as sampling runs.
+- The alert engine costs ~0.1 µs per sample for one GPU.
+
+### Terminal dashboard
+- **Alert toasts** in the dashboard, an alert list on the Diagnosis tab and a count in the header. `m` mutes alerts for 1 hour.
+- **Options:** `--alerts/--no-alerts`, `--bell`, `--idle-held-min`, `--job-min`.
+- **No UI needed:** `gpu-pulse log --alerts` prints one line per alert. `--notify` also sends a desktop notification on Linux via `notify-send`.
+- **Resting pulse:** while the GPU is idle, the pulse strip scrolls slowly (4 columns/s instead of 36) and speeds up with load. On an idle GPU, pulse repaints over 15 s went from 181 to 60.
+
+### Project
+- Tests: extension 67 → 102, terminal 193 → 227.
+
 ## 0.2.0
 
 ### VS Code extension

@@ -6,7 +6,7 @@
   const vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage() {} };
   const SPARK_MS = 5 * 60e3;
 
-  const state = { sample: null, recent: [], insights: [], fleet: [], selected: null, config: { tempWarn: 80, intervalMs: 500 }, vendor: 'none', lastTick: 0 };
+  const state = { sample: null, recent: [], insights: [], fleet: [], alerts: [], selected: null, config: { tempWarn: 80, intervalMs: 500 }, vendor: 'none', lastTick: 0 };
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const fmt = (v, d = 0) => (v == null || Number.isNaN(v) ? '–' : Number(v).toFixed(d));
@@ -18,7 +18,7 @@
 
   document.getElementById('app').innerHTML = `
     <div class="sb">
-      <div class="sb-top"><span class="live-dot" id="live"></span><span id="rate">live</span><span class="sb-sp"></span><span id="sum"></span></div>
+      <div class="sb-top"><span class="live-dot" id="live"></span><span id="rate">live</span><span class="sb-sp"></span><span class="sb-alerts" id="alerts" role="status" hidden></span><span id="sum"></span></div>
       <div class="sb-gpus" id="gpus"><div class="sb-empty">Waiting for data…</div></div>
       <section class="sb-sec">
         <div class="sb-h"><span id="spark-title">GPU utilization</span><span class="sb-sub">last 5 min</span></div>
@@ -35,7 +35,7 @@
       <button class="sb-open" data-cmd="gpuPulse.openDashboard">Open full dashboard</button>
     </div>`;
   const E = {};
-  for (const id of ['live', 'rate', 'sum', 'gpus', 'spark-title', 'spark', 'cpu-v', 'cpu-b', 'ram-v', 'ram-b', 'ins']) E[id] = document.getElementById(id);
+  for (const id of ['live', 'rate', 'alerts', 'sum', 'gpus', 'spark-title', 'spark', 'cpu-v', 'cpu-b', 'ram-v', 'ram-b', 'ins']) E[id] = document.getElementById(id);
 
   // ---- GPU rows ----
   const rows = new Map();
@@ -157,7 +157,18 @@
     txt(E.rate, `live · ${sec < 1 ? sec.toFixed(2) : sec.toFixed(1)}s`);
   }
 
-  function renderAll() { renderRows(); renderSelection(); renderSpark(); renderSystem(); renderInsights(); renderRate(); }
+  // Active alerts: a small badge in the top row; the titles are in its tooltip.
+  function renderAlerts() {
+    const a = state.alerts || [];
+    if (E.alerts.hidden !== !a.length) E.alerts.hidden = !a.length;
+    E.alerts.classList.toggle('warn', a.some((x) => x.level === 'warning'));
+    // Alert text only goes through DOM properties (title / aria-label), never innerHTML.
+    E.alerts.title = a.map((x) => `${x.title}. ${x.detail}`).join('\n');
+    E.alerts.setAttribute('aria-label', a.length ? `${a.length} active GPU alert${a.length > 1 ? 's' : ''}: ${a.map((x) => x.title).join('; ')}` : '');
+    html(E.alerts, a.length ? `<span aria-hidden="true">!</span> ${a.length} alert${a.length > 1 ? 's' : ''}` : '');
+  }
+
+  function renderAll() { renderRows(); renderSelection(); renderSpark(); renderSystem(); renderInsights(); renderRate(); renderAlerts(); }
 
   // ---- events ----
   document.addEventListener('click', (e) => {
@@ -201,12 +212,13 @@
     const m = ev.data;
     if (m.type === 'init') {
       pendingSel = null;
-      Object.assign(state, { sample: m.sample, recent: m.recent || [], selected: m.selected, config: m.config || state.config, vendor: m.vendor, lastTick: Date.now() });
+      Object.assign(state, { sample: m.sample, recent: m.recent || [], selected: m.selected, config: m.config || state.config, vendor: m.vendor, lastTick: Date.now(), alerts: m.alerts || [] });
       applyAnalysis(m.analysis);
       P.setAnimMs(state.config.intervalMs * 0.6);
       if (document.hidden) dirty = true; else renderAll();
     } else if (m.type === 'tick') {
       Object.assign(state, { sample: m.sample, selected: pendingSel || m.selected, lastTick: Date.now() });
+      if (m.alerts) state.alerts = m.alerts;
       if (!pendingSel) {
         if (m.analysis) applyAnalysis(m.analysis);
         if (m.point) {
@@ -219,6 +231,7 @@
       if (document.hidden) { dirty = true; return; }
       renderRows(); renderSpark(); renderSystem();
       if (m.analysis) renderInsights();
+      if (m.alerts) renderAlerts();
       if (E.live._stale) checkStale();
     }
   });

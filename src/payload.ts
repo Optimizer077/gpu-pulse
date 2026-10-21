@@ -1,5 +1,6 @@
 import { toPoint, type HistoryStore, type RecentPoint } from './history';
 import { buildFleetInsights, buildInsights, bySeverity, FLEET_WINDOW_MIN, grade, type FleetEntry } from './insights';
+import type { Alert } from './alerts';
 import type { GpuProcess, GpuSample, Sample, Specs } from './types';
 
 const WINDOWS: [string, number][] = [
@@ -42,6 +43,11 @@ export function analysis(history: HistoryStore, s: Sample | undefined, id: strin
 
 export type Analysis = ReturnType<typeof analysis>;
 
+/** What the views show for an active alert (rendered as text, escaped in the webview). */
+export type AlertView = Pick<Alert, 'level' | 'title' | 'detail'>;
+
+export const alertViews = (active: Alert[]): AlertView[] => active.map((a) => ({ level: a.level, title: a.title, detail: a.detail }));
+
 export interface InitContext {
   history: HistoryStore;
   sample: Sample | undefined;
@@ -51,6 +57,8 @@ export interface InitContext {
   specs: Specs | undefined;
   tempWarn: number;
   intervalMs: number;
+  /** Alerts whose condition still holds. */
+  alerts: AlertView[];
   /** Side bar: 5 minutes of live points, no heatmap / processes / specs. */
   compact?: boolean;
 }
@@ -72,6 +80,7 @@ export function initPayload(c: InitContext) {
     processes: c.compact ? [] : c.processes,
     specs: c.compact ? undefined : c.specs,
     analysis: analysis(c.history, c.sample, id, c.tempWarn),
+    alerts: c.alerts,
   };
 }
 
@@ -94,6 +103,8 @@ export interface TickMessage {
   selected: string | undefined;
   /** Present only when recomputed (at most every ANALYSIS_EVERY_MS) and different from the last one sent. */
   analysis?: Analysis;
+  /** Present only when the set of active alerts changed. */
+  alerts?: AlertView[];
 }
 
 /**

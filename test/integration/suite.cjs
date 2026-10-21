@@ -16,9 +16,18 @@ exports.run = async function run() {
   assert.ok(api && typeof api.sidebarResolved === 'function', 'activate() returns the test API');
 
   const cmds = await vscode.commands.getCommands(true);
-  for (const c of ['gpuPulse.openDashboard', 'gpuPulse.clearHistory', 'gpuPulse.exportHistory', 'gpuPulse.focusSidebar']) {
+  for (const c of [
+    'gpuPulse.openDashboard', 'gpuPulse.clearHistory', 'gpuPulse.exportHistory', 'gpuPulse.focusSidebar',
+    'gpuPulse.muteAlerts', 'gpuPulse.unmuteAlerts',
+  ]) {
     assert.ok(cmds.includes(c), `command ${c} registered`);
   }
+
+  // Alert mute: one hour, shared through globalState; unmute clears it.
+  await vscode.commands.executeCommand('gpuPulse.muteAlerts');
+  assert.strictEqual(api.alertsMuted(), true, 'alerts muted after gpuPulse.muteAlerts');
+  await vscode.commands.executeCommand('gpuPulse.unmuteAlerts');
+  assert.strictEqual(api.alertsMuted(), false, 'alerts unmuted after gpuPulse.unmuteAlerts');
 
   await vscode.commands.executeCommand('gpuPulse.openDashboard');
   await sleep(4000);

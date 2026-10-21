@@ -7,6 +7,11 @@ body::before, body::after { display: none; }
 .sb-top { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
 .sb-sp { flex: 1; }
 .sb-top .live-dot { width: 6px; height: 6px; }
+.sb-alerts {
+  padding: 0 6px; border-radius: 999px; line-height: 16px; white-space: nowrap;
+  color: var(--info); border: 1px solid color-mix(in srgb, var(--info) 55%, transparent);
+}
+.sb-alerts.warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 55%, transparent); }
 
 .sb-gpus { display: flex; flex-direction: column; gap: 6px; }
 .sb-gpu {

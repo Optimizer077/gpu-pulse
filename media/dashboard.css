@@ -114,6 +114,8 @@ body.vscode-light::after { opacity: .7; }
   border: 1px solid var(--hair-strong); border-radius: 999px; background: color-mix(in srgb, var(--surface) 70%, transparent);
   font-family: var(--mono); font-size: 11px; color: var(--ink-2); white-space: nowrap;
 }
+.chip.alert-chip { color: var(--info); border-color: color-mix(in srgb, var(--info) 55%, transparent); }
+.chip.alert-chip.warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 55%, transparent); }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 0 var(--good); animation: ping 2s infinite; }
 .live-dot.stale { background: var(--warning); animation: none; }
 @keyframes ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 70%, transparent); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }

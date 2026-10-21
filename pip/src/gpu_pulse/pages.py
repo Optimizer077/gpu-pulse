@@ -294,5 +294,6 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
         hf = _panel(app, "health-full")
         hf.update(C.health_grid(C.health_rows(d, s, g, app.mon.cfg.temp_warn, grade), hf.inner_width))
         _panel(app, "insights").update(C.insights_list(C.merged_insights(a, d, extra)))
+        app.draw_alerts(force=True)
         td = _panel(app, "truth-d")
         td.update(P.true_usage(g, td.inner_width, _truth_rows(g, 1), 1))
