@@ -13,8 +13,9 @@ Live GPU, CPU and memory dashboards with usage history, *true* GPU utilization, 
 [![VS Code](https://img.shields.io/badge/VS%20Code-%E2%89%A5%201.85-8e74e4)](#vs-code-extension)
 [![Python](https://img.shields.io/badge/python-%E2%89%A5%203.9-d27019)](#terminal-dashboard-gpu-pulse)
 [![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Remote--SSH-d24d8a)](#platform-support)
+[![Apple Silicon / Metal](https://img.shields.io/badge/Apple%20Silicon-Metal%20supported-0ca30c)](#apple-silicon--metal)
 
-[Install](#install) · [Features](#features) · [True usage](#why-utilization-isnt-enough) · [Diagnosis](#bottleneck-diagnosis) · [Usage](#usage) · [How it works](#how-it-works) · [FAQ](#faq--troubleshooting)
+[Install](#install) · [Features](#features) · [Apple Silicon / Metal](#apple-silicon--metal) · [True usage](#why-utilization-isnt-enough) · [Diagnosis](#bottleneck-diagnosis) · [Usage](#usage) · [How it works](#how-it-works) · [FAQ](#faq--troubleshooting)
 
 <img src="docs/images/terminal-rings.gif" alt="Animated ring gauges in the gpu-pulse terminal dashboard" width="100%">
 
@@ -29,6 +30,7 @@ Live GPU, CPU and memory dashboards with usage history, *true* GPU utilization, 
 | Where it runs | Inside VS Code, including on Linux GPU servers over Remote-SSH and WSL | Any terminal: local, SSH, tmux |
 | Best for | Watching a training run while you code | Servers, quick checks, deep analysis |
 | Live gauges and charts | ✅ Canvas dashboard | ✅ Animated braille ring gauges |
+| **Apple Silicon / Metal** | ✅ GPU utilization and shared memory | ✅ GPU utilization and shared memory |
 | 5 min / 30 min / 1 h / 24 h averages | ✅ | ✅ |
 | 24-hour heatmap | ✅ | ✅ |
 | **True usage** (SM, Tensor Core, DRAM activity) | — | ✅ |
@@ -80,6 +82,35 @@ Both read the same kind of data, apply the same insight rules, and record histor
 </tr>
 </table>
 
+### Apple Silicon / Metal
+
+**Both dashboards now support Apple Silicon Macs.** GPU Pulse detects the GPU automatically and reads
+utilization and shared GPU allocations through macOS `ioreg`, with no `sudo` or extra helper to install.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/terminal-metal.png" alt="Terminal dashboard on an Apple M2 Pro during a real Metal workload, showing GPU utilization and shared memory"><br><sub><b>Terminal</b>: real M2 Pro readings during a Metal compute workload.</sub></td>
+<td width="50%"><img src="docs/images/vscode-metal.png" alt="VS Code dashboard renderer using real Apple M2 Pro readings, with GPU memory labeled as shared and unsupported sensors shown as unavailable"><br><sub><b>VS Code dashboard</b>: real M2 Pro readings in the browser preview, with shared GPU memory and unavailable sensor values.</sub></td>
+</tr>
+</table>
+
+| Apple Silicon feature | Terminal | VS Code |
+|---|---|---|
+| Live GPU utilization | ✅ | ✅ |
+| Allocated GPU memory, labeled **shared** | ✅ | ✅ |
+| Usage history, heatmap and CSV export | ✅ | ✅ |
+| Job-finished alerts | ✅ | ✅ |
+| CPU and RAM monitoring | ✅ | ✅ |
+| GPU temperature, power, clocks and per-process usage | — | — |
+| Dedicated VRAM capacity / percentage and NVIDIA GPM counters | — | — |
+
+Validated on an **Apple M2 Pro** with a real Metal workload: utilization rose from **0% to 99%** and
+returned to idle afterward. Shared system memory has no dedicated VRAM total, so memory-capacity alerts
+stay unavailable. IORegistry counters are best effort and can vary by macOS version.
+
+**Available on `main`; not included in the v0.3.0 release files.** Use the source install or build the
+extension from the [Mac checkout instructions](#platform-support).
+
 ---
 
 ## Install
@@ -108,6 +139,7 @@ Each release includes `SHA256SUMS.txt` for checking the downloads.
 - **NVIDIA GPU:** a driver that includes `nvidia-smi` / NVML. That's every standard NVIDIA driver on Windows and Linux.
 - **True-usage metrics:** need NVML **GPM** support, which recent GPUs and drivers provide (verified on an RTX 50-series card under Windows). Without it, those panels say so; nothing breaks.
 - **AMD:** Linux `amdgpu` driver (via `/sys/class/drm`), best effort.
+- **Apple Silicon / Metal:** macOS on an Apple Silicon Mac, using built-in `ioreg`; available from `main`.
 - **No GPU:** CPU, RAM, disk, network and specs still work.
 
 ---
@@ -333,11 +365,15 @@ flowchart LR
         SMI["nvidia-smi -lms stream<br/>(VS Code extension)"]
         SYS["psutil / OS<br/>CPU · RAM · swap · disk · net"]
         AMD["amdgpu sysfs<br/>(Linux)"]
+        METAL["Apple Silicon / Metal<br/>macOS ioreg<br/>util · shared GPU allocation"]
     end
     NVML --> MON
     SMI --> EXT
     SYS --> MON
     AMD --> MON
+    AMD --> EXT
+    METAL --> MON
+    METAL --> EXT
     MON["Monitor<br/>0.5 s samples"] --> HIST["History<br/>1 h raw + per-minute buckets"]
     HIST --> INTEL["Intelligence engine<br/>bottleneck · score · sessions<br/>forecast · health"]
     INTEL --> TUI["Terminal dashboard<br/>(Textual, 20 fps)"]
@@ -348,8 +384,9 @@ flowchart LR
 | | Terminal dashboard | VS Code extension |
 |---|---|---|
 | GPU data | NVML via `nvidia-ml-py` (≈0.1 ms per GPU per sample incl. GPM) | One long-lived `nvidia-smi --query-gpu … -lms` stream (auto-restart, polling fallback) |
+| Apple Silicon / Metal data | ✅ macOS `ioreg`: GPU utilization and shared GPU allocation | ✅ Same source, sampled by the extension host |
 | UI | Textual + Rich, braille ring gauges drawn as cached line strips | Webview (dashboard tab + side-bar view), Canvas 2D, bundled fonts, no CDN |
-| History file | `%LOCALAPPDATA%\gpu-pulse\history.json` (Windows), `~/.local/share/gpu-pulse/history.json` (Linux) | VS Code global storage on the GPU machine |
+| History file | `%LOCALAPPDATA%\gpu-pulse\history.json` (Windows), `~/.local/share/gpu-pulse/history.json` (Linux), `~/Library/Application Support/gpu-pulse/history.json` (macOS) | VS Code global storage on the GPU machine |
 
 **Privacy:** everything stays on your machine. No telemetry, no network calls. The serial number is never read.
 

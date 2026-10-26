@@ -14,6 +14,18 @@ gpu-pulse --demo           # preview every feature with simulated load
 
 Full documentation, screenshots and the bottleneck reference are in the [project README](https://github.com/Optimizer077/gpu-pulse#readme).
 
+## Apple Silicon / Metal
+
+✅ **Live GPU utilization** · ✅ **Shared GPU allocation** · ✅ **History and CSV export** ·
+✅ **Job-finished alerts** · ✅ **CPU and RAM monitoring**
+
+![Terminal dashboard on an Apple M2 Pro during a real Metal compute workload](https://raw.githubusercontent.com/Optimizer077/gpu-pulse/main/docs/images/terminal-metal.png)
+
+Real M2 Pro readings; no simulated GPU data. The macOS backend uses built-in `ioreg`, requires no `sudo`,
+and leaves unsupported GPU sensors unavailable. Apple Silicon support is available from `main` using
+the source install above; it is not included in the v0.3.0 release files. See [supported hardware](#supported-hardware)
+for the available metrics and shared-memory behavior.
+
 ## Commands
 
 | Command | What it does |
@@ -66,7 +78,7 @@ The ring gauges are drawn in braille dots. They sweep to full on startup and the
 |-----|---------|-------|-------|
 | NVIDIA | NVML (ships with the driver) | NVML (ships with the driver) | — |
 | AMD | not yet | `amdgpu` via `/sys/class/drm` (best effort) | — |
-| Apple Silicon / Metal | — | — | Utilization and allocated GPU memory via `ioreg` |
+| Apple Silicon / Metal | — | — | ✅ Utilization and allocated GPU memory via `ioreg` |
 | none | CPU / RAM / specs only | CPU / RAM / specs only | CPU / RAM / specs only |
 
 Apple Silicon support requires no `sudo`, helper installation or extra Python dependency. IORegistry counters
