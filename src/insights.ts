@@ -130,7 +130,10 @@ export function buildInsights(
     out.push({
       level: 'info',
       title: 'No supported GPU detected',
-      detail: 'nvidia-smi was not found and no amdgpu device exposes utilization. CPU and memory are still tracked.',
+      detail:
+        process.platform === 'darwin'
+          ? 'ioreg lists no GPU accelerator (common in virtual machines). CPU and memory are still tracked.'
+          : 'nvidia-smi was not found and no amdgpu device exposes utilization. CPU and memory are still tracked.',
     });
   }
   if (hour.coveredMinutes < 5) {
@@ -141,13 +144,15 @@ export function buildInsights(
     });
   }
 
+  // Unified memory (Apple Silicon): the share is GPU-allocated memory of all system RAM.
+  const unified = !!gpu?.unifiedMemory;
   if (gpu) {
     const vram = gpu.memUsedMiB !== null && gpu.memTotalMiB ? gpu.memUsedMiB / gpu.memTotalMiB : null;
     if (vram !== null && vram >= 0.95) {
       out.push({
         level: 'serious',
-        title: 'VRAM nearly full',
-        detail: `${pct(vram)} of video memory is allocated. New allocations may fail with out-of-memory errors.`,
+        title: unified ? 'GPU memory nearly full' : 'VRAM nearly full',
+        detail: `${pct(vram)} of ${unified ? 'unified (system) memory is allocated by the GPU' : 'video memory is allocated'}. New allocations may fail with out-of-memory errors.`,
       });
     }
     if (gpu.tempC !== null && gpu.tempC >= tempWarn) {
@@ -170,7 +175,7 @@ export function buildInsights(
       out.push({
         level: 'warning',
         title: 'Memory held while GPU idles',
-        detail: `For ${pct(hour.heldIdleShare)} of the last hour, at least ${HELD_VRAM}% of VRAM was allocated while utilization stayed under ${IDLE_UTIL}%. An open notebook or idle process may be holding memory.`,
+        detail: `For ${pct(hour.heldIdleShare)} of the last hour, at least ${HELD_VRAM}% of ${unified ? 'unified memory was allocated by the GPU' : 'VRAM was allocated'} while utilization stayed under ${IDLE_UTIL}%. An open notebook or idle process may be holding memory.`,
       });
     }
     if (hour.util < 20) {

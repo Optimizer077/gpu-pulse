@@ -68,7 +68,13 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"gpu-pulse {__version__}")
     p.add_argument("--history", type=Path, default=None, help=f"history file (default: {default_history_path()})")
     p.add_argument("--temp-warn", type=float, default=80.0, help="temperature warning threshold in °C")
-    p.add_argument("-i", "--interval", type=float, default=0.5, help="dashboard: seconds between samples (default 0.5)")
+    p.add_argument(
+        "-i",
+        "--interval",
+        type=float,
+        default=0.5,
+        help="dashboard: seconds between samples (default 0.5; at least 1 on Apple GPUs, where each read runs ioreg)",
+    )
     p.add_argument(
         "--fps", type=float, default=DEFAULT_FPS, help="dashboard: animation frames per second, 0 = off (default 12)"
     )
@@ -81,6 +87,12 @@ def _parser() -> argparse.ArgumentParser:
         default=1,
         metavar="N",
         help="with --demo: number of simulated GPUs, 1-16 (default 1); GPU 2 plays a straggler",
+    )
+    p.add_argument(
+        "--demo-vendor",
+        choices=("nvidia", "apple"),
+        default="nvidia",
+        help="with --demo: simulate an NVIDIA GPU (default) or an Apple Silicon GPU (no temperature/power)",
     )
     p.add_argument(
         "--alerts",
@@ -123,6 +135,7 @@ def _monitor(args: argparse.Namespace, interval: float = 1.0, persist: bool = Tr
             persist=persist and not demo,
             demo=demo,
             demo_gpus=args.demo_gpus if demo else 1,
+            demo_vendor=args.demo_vendor if demo else "nvidia",
         )
     )
 
@@ -208,6 +221,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.demo_gpus > 1 and not args.demo:
         parser.error("--demo-gpus only applies with --demo (real GPUs are always all shown)")
+    if args.demo_vendor != "nvidia" and not args.demo:
+        parser.error("--demo-vendor only applies with --demo (real GPUs are detected)")
+    if args.demo_vendor == "apple" and args.demo_gpus > 1:
+        parser.error("--demo-vendor apple simulates one GPU (Apple Silicon Macs have one); drop --demo-gpus")
     cmd = args.cmd or "dashboard"
     if cmd == "dashboard":
         # stderr output would draw over the full-screen UI; route it to Textual's log instead.

@@ -2,6 +2,24 @@
 
 CPU figures are measured on one machine (RTX 5060 Ti, Core Ultra 7 265F, Windows 11) and expressed as a share of one CPU core. Your numbers will differ.
 
+## 0.4.0 (beta: macOS support, not yet verified on Mac hardware)
+
+### macOS / Apple GPUs (Metal), both tools
+- **Apple Silicon (M-series):** GPU utilization (device, renderer, tiler) and GPU memory in use (unified memory, against total RAM), read from `ioreg` (IOAccelerator). No admin rights needed.
+- **Specs:** GPU name, GPU core count and Metal version from `system_profiler`.
+- **Intel Macs:** the AMD/Intel GPU through the same `ioreg` interface (VRAM used/total where reported).
+- **Shown as n/a on macOS:** temperature, power, clocks, fan, PCIe, the process list, and NVIDIA-only true-usage (SM/Tensor) counters. Heat, power and PCIe rules never fire on Apple GPUs.
+- **VS Code:** "GPU memory (unified)" wording, and "16-core GPU · Metal 3" in the dashboard and Machine card.
+- **Terminal:**
+  - a GPU LIVE panel (device / renderer / tiler)
+  - `--demo --demo-vendor apple`
+  - Apple GPUs sampled at most every 1 s until the real `ioreg` cost is measured
+- **Diagnostics for testing on a Mac:** `scripts/mac-probe.sh` (extension) and `pip/scripts/mac_probe.py` (terminal). Both are read-only and drop monitor serial numbers.
+- **Caveat:** the `ioreg` key names come from documentation and memory, and tests run against reconstructed sample output. This beta exists to verify them on a real Mac.
+
+### Fixes
+- Terminal test suite: widget unit tests now pass on Python 3.9 too. Only the tests were affected, not the app.
+
 ## 0.3.0
 
 ### Alerts (both tools, same rules)

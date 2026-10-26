@@ -1,6 +1,7 @@
 """Dev-only: run the dashboard headless and save an SVG screenshot.
 
-    uv run python scripts/screenshot.py out.svg [--demo | --live-demo] [--size 160x62] [--keys 2] [--wait 4]
+    uv run python scripts/screenshot.py out.svg [--demo | --live-demo [--demo-vendor apple]] [--size 160x62]
+        [--keys 2] [--wait 4]
 
 --keys presses keys before the capture (comma-separated Textual key names, e.g. "2" for the
 GPU tab or "question_mark" for the help overlay).
@@ -71,6 +72,9 @@ async def main() -> None:
     p.add_argument("--demo", action="store_true")
     p.add_argument("--live-demo", action="store_true", help="use the app's --demo mode (simulated GPU)")
     p.add_argument("--demo-gpus", type=int, default=1, help="with --live-demo: number of simulated GPUs")
+    p.add_argument(
+        "--demo-vendor", choices=("nvidia", "apple"), default="nvidia", help="with --live-demo: simulated GPU kind"
+    )
     p.add_argument("--size", default="160x62")
     p.add_argument("--keys", default="", help="comma-separated keys to press before the capture")
     p.add_argument("--wait", type=float, default=4.0, help="seconds to let the dashboard run first")
@@ -84,7 +88,14 @@ async def main() -> None:
     if args.demo:
         seed(hist, uuid)
     mon = Monitor(
-        MonitorConfig(history_path=hist, persist=False, interval_s=0.5, demo=args.live_demo, demo_gpus=args.demo_gpus)
+        MonitorConfig(
+            history_path=hist,
+            persist=False,
+            interval_s=0.5,
+            demo=args.live_demo,
+            demo_gpus=args.demo_gpus,
+            demo_vendor=args.demo_vendor,
+        )
     )
     app = GpuDashboard(mon)
     async with app.run_test(size=(w, h)) as pilot:

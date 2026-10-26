@@ -1,0 +1,15 @@
+{
+  "_comment" : "RECONSTRUCTION, not a real capture: system_profiler SPDisplaysDataType -json on an Apple M1 Pro, spdisplays_ndrvs (attached displays) removed as scripts/mac-probe.sh does. Replace with its gpu-sp.json.",
+  "SPDisplaysDataType" : [
+    {
+      "_name" : "Apple M1 Pro",
+      "spdisplays_mtlgpufamilysupport" : "spdisplays_metal3",
+      "spdisplays_vendor" : "sppci_vendor_Apple",
+      "sppci_bus" : "spdisplays_builtin",
+      "sppci_cores" : "16",
+      "sppci_device_type" : "spdisplays_gpu",
+      "sppci_model" : "Apple M1 Pro",
+      "sppci_vendor" : "sppci_vendor_Apple"
+    }
+  ]
+}

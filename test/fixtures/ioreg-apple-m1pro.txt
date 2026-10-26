@@ -1,0 +1,33 @@
+# RECONSTRUCTION, not a real capture: written from memory of the known output format of
+#   ioreg -r -d 1 -w 0 -c IOAccelerator
+# on an Apple M1 Pro (16-core GPU). Key names and values are likely but unverified.
+# Replace this file with a real capture: run scripts/mac-probe.sh on the Mac and copy its
+# gpu-ioreg.txt here (comment lines like these are ignored by the parser and may be dropped).
++-o AGXAcceleratorG13X  <class AGXAcceleratorG13X, id 0x100000a4b, registered, matched, active, busy 0 (0 ms), retain 56>
+    {
+      "IOGeneralInterest" = "IOCommand is not serializable"
+      "IOMatchedAtBoot" = Yes
+      "IOReportLegendPublic" = Yes
+      "model" = "Apple M1 Pro"
+      "IOPowerManagement" = {"ChildrenPowerState"=1,"DevicePowerState"=1,"CurrentPowerState"=1,"CapabilityFlags"=32768,"MaxPowerState"=1,"DriverPowerState"=0}
+      "IOClass" = "AGXAcceleratorG13X"
+      "CFBundleIdentifierKernel" = "com.apple.AGXG13X"
+      "IOProviderClass" = "AGXFirmwareKextG13XRTBuddy"
+      "IOPersonalityPublisher" = "com.apple.AGXG13X"
+      "gpu-core-count" = 16
+      "CFBundleIdentifier" = "com.apple.AGXG13X"
+      "AGXParameterBufferMaxSize" = 3355443200
+      "IONameMatch" = "gpu,t6000"
+      "IOMatchCategory" = "IOAccelerator"
+      "IOReportLegend" = ({"IOReportChannels"=((5715161089483223040,8590065666,"GPU Stats"),(5715161089483223041,8590065666,"GPU Perf States")),"IOReportGroupName"="GPU Stats","IOReportChannelInfo"={"IOReportChannelUnit"=0}})
+      "PerformanceStatistics" = {"In use system memory (driver)"=0,"Alloc system memory"=1874329600,"Tiler Utilization %"=5,"recoveryCount"=0,"lastRecoveryTime"=0,"Renderer Utilization %"=4,"TiledSceneBytes"=0,"Device Utilization %"=6,"SplitSceneCount"=0,"Allocated PB Size"=1310720,"In use system memory"=452984832}
+      "MetalPluginName" = "AGXMetalG13X"
+      "MetalPluginClassName" = "AGXG13XDevice"
+      "IOProbeScore" = 0
+      "IONameMatched" = "gpu,t6000"
+      "IOUserClientClass" = "AGXDeviceUserClient"
+      "IOGLBundleName" = "AppleMetalOpenGLRenderer"
+      "AGXEnableTraceBuffer" = <00000000>
+      "GPUConfigurationVariable" = {"gpu_gen"=13,"num_cores"=16,"num_gps"=8,"num_frags"=16,"num_mgpus"=2,"core_mask_list"=(255,255),"usc_gen"=1}
+    }
+

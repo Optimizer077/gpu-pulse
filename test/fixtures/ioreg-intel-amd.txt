@@ -1,0 +1,28 @@
+# RECONSTRUCTION, not a real capture: an Intel MacBook Pro 16-inch (2019) with Intel UHD 630
+# and AMD Radeon Pro 5500M, written from memory of the known output format of
+#   ioreg -r -d 1 -w 0 -c IOAccelerator
+# Key names (vramUsedBytes / vramFreeBytes, Temperature(C), ...) are likely but unverified.
+# The AMD accelerator carries no model name and no VRAM size; those sit on its PCI parent,
+# see ioreg-intel-amd-vram.txt. Replace with a real capture from scripts/mac-probe.sh.
++-o IntelAccelerator  <class IntelAccelerator, id 0x1000004d3, registered, matched, active, busy 0 (0 ms), retain 23>
+    {
+      "IOClass" = "IntelAccelerator"
+      "IOProviderClass" = "IOPCIDevice"
+      "IOMatchCategory" = "IOAccelerator"
+      "IOGLBundleName" = "AppleIntelKBLGraphicsGLDriver"
+      "MetalPluginName" = "AppleIntelKBLGraphicsMTLDriver"
+      "MetalStatisticsName" = "AppleIntelKBLGraphicsMTLDriver"
+      "PerformanceStatistics" = {"Device Utilization %"=2,"GPU Activity(%)"=2,"In use system memory"=268435456,"Alloc system memory"=805306368,"recoveryCount"=0}
+    }
+
++-o AMDRadeonX6000_AMDNavi14GraphicsAccelerator  <class AMDRadeonX6000_AMDNavi14GraphicsAccelerator, id 0x10000052a, registered, matched, active, busy 0 (0 ms), retain 28>
+    {
+      "IOClass" = "AMDRadeonX6000_AMDNavi14GraphicsAccelerator"
+      "IOProviderClass" = "IOPCIDevice"
+      "IOMatchCategory" = "IOAccelerator"
+      "IOGLBundleName" = "AMDRadeonX6000GLDriver"
+      "MetalPluginName" = "AMDRadeonX6000MTLDriver"
+      "ATY,fb_linebytes" = <00140000>
+      "PerformanceStatistics" = {"Device Utilization %"=37,"GPU Activity(%)"=37,"vramUsedBytes"=1543503872,"vramFreeBytes"=7046430720,"gartUsedBytes"=33554432,"Temperature(C)"=58,"Fan Speed(%)"=31,"Core Clock(MHz)"=1300,"Memory Clock(MHz)"=1500,"Total Power(W)"=19}
+    }
+

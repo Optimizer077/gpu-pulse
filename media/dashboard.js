@@ -18,6 +18,11 @@
   const gb = (bytes) => (bytes / 1073741824).toFixed(bytes >= 100 * 1073741824 ? 0 : 1);
   const mibGb = (m) => (m == null ? '–' : (m / 1024).toFixed(1));
   const shortName = (n) => String(n || '').replace(/^NVIDIA (GeForce )?/, '');
+  // Unified memory (Apple Silicon, Intel iGPU on macOS): the GPU's share of system RAM, not VRAM.
+  const memLong = (g) => (g && g.unifiedMemory ? 'GPU memory (unified)' : 'VRAM');
+  const memShort = (g) => (g && g.unifiedMemory ? 'GPU mem' : 'VRAM');
+  const NA = '<span class="na">n/a</span>';
+  const macNote = (g) => (g && g.vendor === 'apple' ? 'not reported by macOS' : '');
   const dur = (sec) => {
     const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
     return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`;
@@ -54,7 +59,7 @@
 
   function gaugeHtml(id, label, big) {
     return `<div class="gauge${big ? ' big' : ''}"><canvas id="g-${id}" aria-hidden="true"></canvas>
-      <div class="read"><div class="val" id="v-${id}">–</div><div class="lbl">${label}</div><div class="extra" id="x-${id}"></div>${big ? '<div id="grade"></div>' : ''}</div></div>`;
+      <div class="read"><div class="val" id="v-${id}">–</div><div class="lbl" id="l-${id}">${label}</div><div class="extra" id="x-${id}"></div>${big ? '<div id="grade"></div>' : ''}</div></div>`;
   }
 
   function shell() {
@@ -125,7 +130,7 @@
   shell();
   const E = {};
   for (const id of ['host', 'remote', 'alerts', 'live', 'rate', 'fleet', 'fleet-sub', 'fleet-row', 'gpu-name', 'pstate', 'readouts', 'grade',
-    'v-util', 'x-util', 'v-vram', 'x-vram', 'v-temp', 'x-temp', 'v-power', 'x-power', 'lg-gpu', 'lg-cpu', 'insights', 'windows',
+    'v-util', 'x-util', 'v-vram', 'x-vram', 'l-vram', 'v-temp', 'x-temp', 'v-power', 'x-power', 'lg-gpu', 'lg-cpu', 'insights', 'windows',
     'cores', 'mem-txt', 'mem-bar', 'specs', 'proc-sub', 'procs']) E[id] = document.getElementById(id);
 
   const tip = P.makeTip();
@@ -217,7 +222,7 @@
         <span class="gc-body">
           <span class="gc-gauge"><canvas aria-hidden="true"></canvas><span class="gc-val"><b data-f="util">–</b><small>%</small></span></span>
           <span class="gc-stats">
-            <span class="gc-k"><span>VRAM</span><b data-f="vram">–</b></span>
+            <span class="gc-k"><span>${memShort(g)}</span><b data-f="vram">–</b></span>
             <span class="gc-bar"><span data-f="vbar"></span></span>
             <span class="gc-k"><span>Temp</span><b data-f="temp">–</b></span>
             <span class="gc-k"><span>Power</span><b data-f="power">–</b></span>
@@ -245,6 +250,7 @@
     const avg = new Map((state.fleet || []).map((f) => [f.uuid, f.util]));
     const warn = state.config.tempWarn;
     let sum = 0, n = 0, watts = 0;
+    const anyPower = gs.some((g) => g.powerW != null);
     for (const g of gs) {
       const c = fleetCards.get(g.uuid);
       if (!c) continue;
@@ -255,14 +261,14 @@
       const vp = g.memTotalMiB ? (g.memUsedMiB / g.memTotalMiB) * 100 : null;
       txt(c.f.vram, `${mibGb(g.memUsedMiB)} / ${mibGb(g.memTotalMiB)} GB`);
       css(c.f.vbar, 'width', `${vp == null ? 0 : Math.round(vp)}%`);
-      txt(c.f.temp, g.tempC == null ? '–' : `${fmt(g.tempC)} °C`);
-      txt(c.f.power, g.powerW == null ? '–' : `${fmt(g.powerW)} W`);
+      txt(c.f.temp, g.tempC == null ? (g.vendor === 'apple' ? 'n/a' : '–') : `${fmt(g.tempC)} °C`);
+      txt(c.f.power, g.powerW == null ? (g.vendor === 'apple' ? 'n/a' : '–') : `${fmt(g.powerW)} W`);
       const a = avg.get(g.uuid);
       txt(c.f.avg, a == null ? '–' : `${fmt(a)}%`);
       const hot = g.tempC != null && g.tempC >= warn;
       if (c.hot !== hot) { c.hot = hot; c.el.classList.toggle('hot', hot); }
     }
-    txt(E['fleet-sub'], `${gs.length} GPUs · mean ${n ? fmt(sum / n) : '–'}% · ${fmt(watts)} W total`);
+    txt(E['fleet-sub'], `${gs.length} GPUs · mean ${n ? fmt(sum / n) : '–'}%${anyPower ? ` · ${fmt(watts)} W total` : ''}`);
   }
 
   function renderFleetSelection() {
@@ -282,23 +288,37 @@
     const hour = state.windows[2];
     if (g) {
       txt(E['gpu-name'], `${g.name}${gpus().length > 1 ? ` · GPU ${g.index}` : ''}`);
-      txt(E.pstate, [g.pstate, g.pcieGen ? `PCIe ${g.pcieGen}.0 x${g.pcieWidth}` : null].filter(Boolean).join(' · '));
+      txt(E.pstate, [g.pstate, g.pcieGen ? `PCIe ${g.pcieGen}.0 x${g.pcieWidth}` : null,
+        g.coreCount ? `${g.coreCount}-core GPU` : null, g.unifiedMemory ? 'unified memory' : null].filter(Boolean).join(' · '));
       gauges.util.set(g.util, hour?.util);
       html(E['v-util'], `${fmt(g.util)}<sup>%</sup>`);
       txt(E['x-util'], hour?.util != null ? `▲ 1h avg ${fmt(hour.util)}%` : '');
       const vp = g.memTotalMiB ? (g.memUsedMiB / g.memTotalMiB) * 100 : null;
       gauges.vram.set(vp);
       html(E['v-vram'], `${fmt(vp)}<sup>%</sup>`);
+      txt(E['l-vram'], memLong(g));
       txt(E['x-vram'], `${mibGb(g.memUsedMiB)} / ${mibGb(g.memTotalMiB)} GB`);
-      if (gauges.temp.opt.warn !== state.config.tempWarn) { gauges.temp.opt.warn = state.config.tempWarn; gauges.temp.draw(); }
+      const warnAt = g.tempC == null ? null : state.config.tempWarn; // no threshold tick on an n/a gauge
+      if (gauges.temp.opt.warn !== warnAt) { gauges.temp.opt.warn = warnAt; gauges.temp.draw(); }
+      // A reading the backend does not have (macOS: temperature, power) shows "n/a", not a dash that suggests "loading".
       gauges.temp.set(g.tempC);
-      html(E['v-temp'], `${fmt(g.tempC)}<sup>°C</sup>`);
-      txt(E['x-temp'], hour?.tempPeak ? `1h peak ${fmt(hour.tempPeak)}°C` : '');
+      html(E['v-temp'], g.tempC == null ? NA : `${fmt(g.tempC)}<sup>°C</sup>`);
+      txt(E['x-temp'], g.tempC == null ? macNote(g) : hour?.tempPeak ? `1h peak ${fmt(hour.tempPeak)}°C` : '');
       gauges.power.setMax(g.powerLimitW || 100);
       gauges.power.set(g.powerW);
-      html(E['v-power'], `${fmt(g.powerW)}<sup>W</sup>`);
-      txt(E['x-power'], g.powerLimitW ? `limit ${fmt(g.powerLimitW)} W` : '');
-      const ro = [
+      html(E['v-power'], g.powerW == null ? NA : `${fmt(g.powerW)}<sup>W</sup>`);
+      txt(E['x-power'], g.powerW == null ? macNote(g) : g.powerLimitW ? `limit ${fmt(g.powerLimitW)} W` : '');
+      const pctRo = (k, v) => [k, v != null ? `${fmt(v)}%` : '–', v != null ? v / 100 : null];
+      const metal = (state.specs?.gpus || []).find((x) => x.name === g.name)?.metal;
+      // Apple Silicon / Intel iGPU on macOS: what ioreg reports instead of clocks, fan and power.
+      const ro = g.vendor === 'apple' && g.unifiedMemory ? [
+        pctRo('Renderer', g.rendererUtil),
+        pctRo('Tiler', g.tilerUtil),
+        ['GPU cores', g.coreCount != null ? String(g.coreCount) : '–', null],
+        ['Allocated', g.allocMiB != null ? `${mibGb(g.allocMiB)} GB` : '–', g.allocMiB != null && g.memTotalMiB ? g.allocMiB / g.memTotalMiB : null],
+        ['Graphics API', metal || 'Metal', null],
+        ['Temp · power', 'n/a on macOS', null],
+      ] : [
         ['Core clock', g.clockMHz != null ? `${fmt(g.clockMHz)} MHz` : '–', g.clockMaxMHz ? g.clockMHz / g.clockMaxMHz : null],
         ['Max clock', g.clockMaxMHz != null ? `${fmt(g.clockMaxMHz)} MHz` : '–', null],
         ['Mem clock', g.memClockMHz != null ? `${fmt(g.memClockMHz)} MHz` : '–', null],
@@ -329,7 +349,9 @@
     txt(E['mem-txt'], `${gb(s.mem.usedBytes)} / ${gb(s.mem.totalBytes)} GB · ${mp.toFixed(0)}%`);
 
     const last = state.recent[state.recent.length - 1];
-    html(E['lg-gpu'], legend([['GPU util', 's-gpu', last?.[1]], ['VRAM', 's-vram', last?.[2]]]));
+    const mem = memShort(g);
+    if (gpuChart.opt.series[0].label !== mem) { gpuChart.opt.series[0].label = mem; gpuChart.draw(); }
+    html(E['lg-gpu'], legend([['GPU util', 's-gpu', last?.[1]], [mem, 's-vram', last?.[2]]]));
     html(E['lg-cpu'], legend([['CPU', 's-cpu', last?.[3]], ['RAM', 's-ram', last?.[4]]]));
   }
 
@@ -340,20 +362,21 @@
   /** Rebuilds the cards only when their text changed; sparklines follow the heatmap (per minute) or a theme change. */
   function renderWindows(redrawSparks) {
     if (!state.windows.length) return;
+    const mem = memShort(currentGpu());
     const markup = state.windows.map((w, i) => {
       const has = w.util != null;
       const idle = w.idleShare ?? 0, busy = w.busyShare ?? 0, mid = Math.max(0, 1 - idle - busy);
       return `<div class="win">
         <div class="head"><span>${esc(w.label)}</span><em>${w.coveredMinutes}/${w.minutes} min recorded</em></div>
         <div class="big">${has ? fmt(w.util) : '–'}<small>% avg</small></div>
-        <div class="what">${has ? `peak ${fmt(w.utilPeak)}% · VRAM avg ${fmt(w.vram)}%` : 'no GPU data in this window yet'}</div>
+        <div class="what">${has ? `peak ${fmt(w.utilPeak)}% · ${mem} avg ${fmt(w.vram)}%` : 'no GPU data in this window yet'}</div>
         <div class="stack" role="img" aria-label="idle ${Math.round(idle * 100)}%, active ${Math.round(mid * 100)}%, busy ${Math.round(busy * 100)}%">
           <div class="idle" style="flex-grow:${idle.toFixed(3)}"></div><div class="mid" style="flex-grow:${mid.toFixed(3)}"></div><div class="busy" style="flex-grow:${busy.toFixed(3)}"></div></div>
         <div class="stack-l"><span>idle ${has ? Math.round(idle * 100) : '–'}%</span><span>busy ${has ? Math.round(busy * 100) : '–'}%</span></div>
         <dl class="kv">
           <dt>Avg power</dt><dd>${w.power ? `${fmt(w.power)} W` : '–'}</dd>
           <dt>Peak temp</dt><dd>${w.tempPeak ? `${fmt(w.tempPeak)} °C` : '–'}</dd>
-          <dt>VRAM held, GPU idle</dt><dd>${w.heldIdleShare != null ? `${Math.round(w.heldIdleShare * 100)}%` : '–'}</dd>
+          <dt>${mem} held, GPU idle</dt><dd>${w.heldIdleShare != null ? `${Math.round(w.heldIdleShare * 100)}%` : '–'}</dd>
           <dt>CPU / RAM avg</dt><dd>${fmt(w.cpu)}% / ${fmt(w.mem)}%</dd>
         </dl>
         <canvas class="spark" data-i="${i}" aria-hidden="true"></canvas>
@@ -395,7 +418,9 @@
     const noMem = list.length && list.every((p) => p.usedMiB == null);
     txt(E['proc-sub'], list.length ? `${list.length} using this GPU${noMem && state.platform === 'win32' ? ' · per-process VRAM is not reported by Windows (WDDM)' : ''}` : '');
     if (state.vendor !== 'nvidia') {
-      html(E.procs, '<div class="empty">Process listing needs an NVIDIA GPU with nvidia-smi.</div>');
+      html(E.procs, state.vendor === 'apple'
+        ? '<div class="empty">macOS does not report GPU use per process.</div>'
+        : '<div class="empty">Process listing needs an NVIDIA GPU with nvidia-smi.</div>');
       return;
     }
     html(E.procs, list.length
@@ -413,7 +438,8 @@
     const cards = [
       [ICON.cpu, 'Processor', sp.cpu.model, `${sp.cpu.cores} cores · ${sp.cpu.threads} threads${sp.cpu.maxGHz && sp.cpu.maxGHz > (sp.cpu.baseGHz || 0) ? ` · up to ${sp.cpu.maxGHz} GHz` : sp.cpu.baseGHz ? ` · base ${sp.cpu.baseGHz} GHz` : ''}`],
       ...sp.gpus.map((g) => [ICON.gpu, 'Graphics', g.name,
-        [g.vramMiB ? `${(g.vramMiB / 1024).toFixed(0)} GB VRAM` : null, g.driver ? `driver ${g.driver}` : null, g.vbios ? `VBIOS ${g.vbios}` : null].filter(Boolean).join(' · ')]),
+        [g.cores ? `${g.cores}-core GPU` : null, g.metal || null, g.unifiedMemory ? 'unified memory' : null,
+          g.vramMiB ? `${(g.vramMiB / 1024).toFixed(0)} GB VRAM` : null, g.driver ? `driver ${g.driver}` : null, g.vbios ? `VBIOS ${g.vbios}` : null].filter(Boolean).join(' · ')]),
       [ICON.mem, 'Memory', `${gb(sp.memory.totalBytes)} GB`, sp.memory.modules.join('\n') || ''],
       ...sp.disks.map((d) => [ICON.disk, 'Storage', d.name, `${(d.sizeBytes / 1e12 >= 1 ? (d.sizeBytes / 1e12).toFixed(1) + ' TB' : (d.sizeBytes / 1e9).toFixed(0) + ' GB')} · ${d.type || ''}`]),
       [ICON.os, 'Operating system', sp.os, `kernel ${sp.kernel} · ${sp.arch}`],

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  RECONSTRUCTION, not a real capture: an Intel MacBook Pro with an Intel iGPU and an AMD Radeon Pro
+  5500M, as `ioreg -r -d 1 -w 0 -c IOAccelerator -a` might print it. Key names are likely but unverified.
+  The Intel entry has no "model" key and the AMD model is <data> (NUL-terminated), as on PCI devices.
+  Replace with a real capture: run scripts/mac_probe.py with its save-fixtures option on an Intel Mac.
+-->
+<plist version="1.0">
+<array>
+	<dict>
+		<key>CFBundleIdentifier</key>
+		<string>com.apple.driver.AppleIntelKBLGraphics</string>
+		<key>IOClass</key>
+		<string>IntelAccelerator</string>
+		<key>IOMatchCategory</key>
+		<string>IOAccelerator</string>
+		<key>PerformanceStatistics</key>
+		<dict>
+			<key>Alloc system memory</key>
+			<integer>805306368</integer>
+			<key>Device Utilization %</key>
+			<integer>5</integer>
+			<key>GPU Core Utilization</key>
+			<integer>48000000</integer>
+			<key>In use system memory</key>
+			<integer>536870912</integer>
+		</dict>
+	</dict>
+	<dict>
+		<key>CFBundleIdentifier</key>
+		<string>com.apple.kext.AMDRadeonX6000</string>
+		<key>IOClass</key>
+		<string>AMDRadeonX6000_AMDNavi14GraphicsAccelerator</string>
+		<key>IOMatchCategory</key>
+		<string>IOAccelerator</string>
+		<key>PerformanceStatistics</key>
+		<dict>
+			<key>Core Clock(MHz)</key>
+			<integer>1300</integer>
+			<key>Device Utilization %</key>
+			<integer>37</integer>
+			<key>Fan Speed(%)</key>
+			<integer>34</integer>
+			<key>GPU Activity(%)</key>
+			<integer>37</integer>
+			<key>Memory Clock(MHz)</key>
+			<integer>1500</integer>
+			<key>Temperature(C)</key>
+			<integer>61</integer>
+			<key>Total Power(W)</key>
+			<integer>25</integer>
+			<key>vramFreeBytes</key>
+			<integer>6442450944</integer>
+			<key>vramUsedBytes</key>
+			<integer>2147483648</integer>
+		</dict>
+		<key>VRAM,totalMB</key>
+		<integer>8192</integer>
+		<key>model</key>
+		<data>QU1EIFJhZGVvbiBQcm8gNTUwME0A</data>
+	</dict>
+</array>
+</plist>

@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 from typing import Literal, Optional
 
 InsightLevel = Literal["good", "warning", "serious", "critical", "info"]
+# "apple" = Apple Silicon GPU (unified memory); "intel" = an Intel Mac's integrated GPU.
+GpuVendor = Literal["nvidia", "amd", "apple", "intel"]
+UNIFIED_LABEL = "GPU memory (unified)"
 
 
 @dataclass(frozen=True)
@@ -15,7 +18,7 @@ class GpuSample:
     index: int
     uuid: str
     name: str
-    vendor: Literal["nvidia", "amd"]
+    vendor: GpuVendor
     util: Optional[float] = None  # %
     mem_util: Optional[float] = None  # % memory-controller busy
     mem_used_mib: Optional[float] = None
@@ -51,12 +54,30 @@ class GpuSample:
     # Wall-clock time (epoch s) the energy counter was read; it is cached for a few seconds, so it can be
     # older than the sample. None = read with the sample (or no counter).
     energy_t: Optional[float] = None
+    # Apple GPUs (IOAccelerator PerformanceStatistics): renderer / tiler engine utilization, %.
+    renderer_util: Optional[float] = None
+    tiler_util: Optional[float] = None
 
     @property
     def vram_pct(self) -> Optional[float]:
         if self.mem_used_mib is None or not self.mem_total_mib:
             return None
         return self.mem_used_mib / self.mem_total_mib * 100
+
+    @property
+    def unified_memory(self) -> bool:
+        """GPU memory is the system's unified memory (Apple Silicon); ``mem_total_mib`` is then all of RAM."""
+        return self.vendor == "apple"
+
+    @property
+    def mem_label(self) -> str:
+        """What to call this GPU's memory: "VRAM", or "GPU memory (unified)" on Apple Silicon."""
+        return UNIFIED_LABEL if self.unified_memory else "VRAM"
+
+    @property
+    def mem_short(self) -> str:
+        """Short form of :attr:`mem_label` for tight rows."""
+        return "GPU mem" if self.unified_memory else "VRAM"
 
 
 @dataclass(frozen=True)
@@ -94,6 +115,10 @@ class GpuDetails:
     display_active: Optional[bool] = None
     board_part: Optional[str] = None
     gpm_supported: Optional[bool] = None  # True-usage metrics (SM/Tensor/DRAM activity) available
+    # macOS (system_profiler / ioreg): GPU core count, Metal support ("Metal 3"), shared system memory.
+    gpu_cores: Optional[int] = None
+    metal_family: Optional[str] = None
+    unified_memory: Optional[bool] = None
 
 
 @dataclass(frozen=True)

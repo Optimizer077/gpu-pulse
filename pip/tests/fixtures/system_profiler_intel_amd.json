@@ -1,0 +1,32 @@
+{
+  "_fixture_note" : "RECONSTRUCTION, not a real capture: system_profiler SPDisplaysDataType -json on an Intel MacBook Pro (Intel UHD 630 + AMD Radeon Pro 5500M). The display serial is fake. Replace with: uv run python scripts/mac_probe.py --save-fixtures tests/fixtures",
+  "SPDisplaysDataType" : [
+    {
+      "_name" : "Intel UHD Graphics 630",
+      "spdisplays_automatic_graphics_switching" : "spdisplays_supported",
+      "spdisplays_mtlgpufamilysupport" : "spdisplays_metal3",
+      "spdisplays_vendor" : "sppci_vendor_intel",
+      "spdisplays_vram_shared" : "1536 MB",
+      "sppci_bus" : "spdisplays_builtin",
+      "sppci_device_type" : "spdisplays_gpu",
+      "sppci_model" : "Intel UHD Graphics 630"
+    },
+    {
+      "_name" : "AMD Radeon Pro 5500M",
+      "spdisplays_mtlgpufamilysupport" : "spdisplays_metal3",
+      "spdisplays_ndrvs" : [
+        {
+          "_name" : "Color LCD",
+          "_spdisplays_display-serial-number" : "FIXTURE-SERIAL-1111",
+          "spdisplays_main" : "spdisplays_yes"
+        }
+      ],
+      "spdisplays_pcie_width" : "x16",
+      "spdisplays_vendor" : "sppci_vendor_amd",
+      "spdisplays_vram" : "8 GB",
+      "sppci_bus" : "spdisplays_pcie_device",
+      "sppci_device_type" : "spdisplays_gpu",
+      "sppci_model" : "AMD Radeon Pro 5500M"
+    }
+  ]
+}

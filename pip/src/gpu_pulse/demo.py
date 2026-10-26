@@ -17,6 +17,8 @@ data-parallel job, and each extra GPU adds a pattern the cross-GPU analysis shou
     GPU 3   sits on a narrower PCIe link (x4 vs x8) and holds the most VRAM
     GPU 4+  well-behaved siblings with small offsets
 
+With ``--demo-vendor apple`` one simulated Apple GPU follows the same phases (see ``demo_apple``).
+
 Values are plausible, not measured. Nothing generated here is ever written to real history.
 """
 

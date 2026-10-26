@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  RECONSTRUCTION, not a real capture: a macOS VM whose paravirtual display adapter is an IOAccelerator
+  without PerformanceStatistics. Expected result: no GPU to monitor.
+-->
+<plist version="1.0">
+<array>
+	<dict>
+		<key>IOClass</key>
+		<string>AppleParavirtGPU</string>
+		<key>IOMatchCategory</key>
+		<string>IOAccelerator</string>
+		<key>IOProviderClass</key>
+		<string>IOPCIDevice</string>
+	</dict>
+</array>
+</plist>

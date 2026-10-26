@@ -1,0 +1,28 @@
+{
+  "_fixture_note" : "RECONSTRUCTION, not a real capture: system_profiler SPDisplaysDataType -json on an M1 Pro-like Mac. The display serial is fake and must never be printed or kept. Replace with: uv run python scripts/mac_probe.py --save-fixtures tests/fixtures",
+  "SPDisplaysDataType" : [
+    {
+      "_name" : "Apple M1 Pro",
+      "spdisplays_mtlgpufamilysupport" : "spdisplays_metal3",
+      "spdisplays_ndrvs" : [
+        {
+          "_name" : "Color LCD",
+          "_spdisplays_display-product-id" : "a050",
+          "_spdisplays_display-serial-number" : "FIXTURE-SERIAL-0000",
+          "_spdisplays_display-vendor-id" : "610",
+          "_spdisplays_displayID" : "1",
+          "_spdisplays_pixels" : "3024 x 1964",
+          "_spdisplays_resolution" : "1512 x 982 @ 120.00Hz",
+          "spdisplays_connection_type" : "spdisplays_internal",
+          "spdisplays_main" : "spdisplays_yes",
+          "spdisplays_online" : "spdisplays_yes"
+        }
+      ],
+      "spdisplays_vendor" : "sppci_vendor_Apple",
+      "sppci_bus" : "spdisplays_builtin",
+      "sppci_cores" : "16",
+      "sppci_device_type" : "spdisplays_gpu",
+      "sppci_model" : "Apple M1 Pro"
+    }
+  ]
+}

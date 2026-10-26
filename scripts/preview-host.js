@@ -2,7 +2,9 @@
 // extension host (ready -> init, selectGpu -> init, live ticks) and optional render counters. Not shipped.
 (function () {
   const q = new URLSearchParams(location.search);
-  const N = Math.max(1, Math.min(16, Number(q.get('gpus')) || 1));
+  // ?apple: an Apple Silicon Mac as the ioreg collector reports it (unified memory, no temperature / power / clocks).
+  const apple = q.has('apple');
+  const N = apple ? 1 : Math.max(1, Math.min(16, Number(q.get('gpus')) || 1));
   const INTERVAL = Math.max(100, Number(q.get('interval')) || 500);
   const legacy = q.has('legacy');
 
@@ -30,10 +32,18 @@
     return Math.max(0, Math.min(100, base - (rnd() < 0.12 ? 55 * rnd() : 0) + rnd() * 6));
   };
   const multi = N > 1;
-  const NAME = multi ? 'NVIDIA A100-SXM4-80GB' : 'NVIDIA GeForce RTX 5060 Ti';
-  const TOTAL = multi ? 81920 : 16311;
+  const NAME = apple ? 'Apple M1 Pro' : multi ? 'NVIDIA A100-SXM4-80GB' : 'NVIDIA GeForce RTX 5060 Ti';
+  const TOTAL = apple ? 32768 : multi ? 81920 : 16311;
   const uuid = (i) => `GPU-${i + 1}`;
+  function appleAt(t, i) {
+    const u = Math.round(util(t, i));
+    return { index: i, uuid: uuid(i), name: NAME, vendor: 'apple', unifiedMemory: true, util: u,
+      rendererUtil: Math.max(0, u - 2), tilerUtil: Math.round(u * 0.8), coreCount: 16, allocMiB: Math.round(1800 + u * 20),
+      memUtil: null, memUsedMiB: Math.round(1600 + u * 12 + (steady ? 0 : rnd() * 40)), memTotalMiB: TOTAL, tempC: null, powerW: null,
+      powerLimitW: null, clockMHz: null, clockMaxMHz: null, memClockMHz: null, fanPct: null, pstate: null, pcieGen: null, pcieWidth: null };
+  }
   function gpuAt(t, i) {
+    if (apple) return appleAt(t, i);
     const u = Math.round(util(t, i));
     const memFrac = lagging(i) ? 0.38 : i === 0 && multi ? 0.91 : 0.72;
     return { index: i, uuid: uuid(i), name: NAME, vendor: 'nvidia', util: u, memUtil: Math.round(u * 0.47),
@@ -42,11 +52,12 @@
       clockMHz: Math.round(multi ? 900 + u * 5 : 1600 + u * 12), clockMaxMHz: multi ? 1410 : 3090, memClockMHz: multi ? 1593 : 14001,
       fanPct: multi ? null : Math.round(30 + u * 0.35), pstate: u > 10 ? 'P2' : 'P8', pcieGen: 4, pcieWidth: multi ? 16 : 8 };
   }
-  const cores = () => Array.from({ length: 20 }, (_, i) => steady ? 3 : Math.round(15 + 70 * Math.abs(Math.sin(i * 1.7 + Date.now() / 3000)) * (0.8 + rnd() * 0.2)));
+  const cores = () => Array.from({ length: apple ? 10 : 20 }, (_, i) => steady ? 3 : Math.round(15 + 70 * Math.abs(Math.sin(i * 1.7 + Date.now() / 3000)) * (0.8 + rnd() * 0.2)));
   function sampleAt(t) {
     const c = cores();
     return { t, gpus: Array.from({ length: N }, (_, i) => gpuAt(t, i)), cpu: { util: c.reduce((a, b) => a + b, 0) / c.length, perCore: c },
-      mem: { usedBytes: (31.7 + (steady ? 0 : rnd() * 0.2)) * 2 ** 30, totalBytes: 63.65 * 2 ** 30 } };
+      mem: apple ? { usedBytes: (18.2 + (steady ? 0 : rnd() * 0.2)) * 2 ** 30, totalBytes: 32 * 2 ** 30 }
+        : { usedBytes: (31.7 + (steady ? 0 : rnd() * 0.2)) * 2 ** 30, totalBytes: 63.65 * 2 ** 30 } };
   }
   const point = (s, id) => {
     const g = s.gpus.find((x) => x.uuid === id) || s.gpus[0];
@@ -57,13 +68,20 @@
   const selIndex = () => Number(selected.split('-')[1]) - 1;
   function analysisFor(t) {
     const k = selIndex(), lag = lagging(k);
+    // Apple: no power or temperature in history (stored as 0, shown as "–"), GPU memory a small share of unified RAM.
     const W = (label, minutes, covered, u, idle, busy) => ({ label, minutes, coveredMinutes: covered, util: lag ? u * 0.3 : u + (t % 7) / 10,
-      utilPeak: 100, vram: lag ? 38 : 64, power: 128, tempPeak: 71, idleShare: idle, busyShare: lag ? busy * 0.2 : busy, heldIdleShare: 0.04, cpu: 34, mem: 48 });
-    const insights = [
-      { level: 'good', title: 'GPU kept busy', detail: 'Above 70% utilization for 55% of the last hour (mean 61%).' },
-      { level: 'warning', title: 'Peaked at 81 °C this hour', detail: 'Above your 80 °C threshold at least once in the last hour.' },
-      { level: 'info', title: 'High utilization, low power draw', detail: 'Utilization counts time any kernel runs, not how many cores are busy.' },
-    ];
+      utilPeak: 100, vram: apple ? 7.4 : lag ? 38 : 64, power: apple ? 0 : 128, tempPeak: apple ? 0 : 71, idleShare: idle,
+      busyShare: lag ? busy * 0.2 : busy, heldIdleShare: apple ? 0 : 0.04, cpu: 34, mem: apple ? 57 : 48 });
+    const insights = apple
+      ? [
+        { level: 'good', title: 'GPU kept busy', detail: 'Above 70% utilization for 55% of the last hour (mean 61%).' },
+        { level: 'info', title: 'Utilization is intermittent', detail: 'Mean 46% with frequent idle gaps. In training loops this pattern often points at data loading or CPU-side work between steps.' },
+      ]
+      : [
+        { level: 'good', title: 'GPU kept busy', detail: 'Above 70% utilization for 55% of the last hour (mean 61%).' },
+        { level: 'warning', title: 'Peaked at 81 °C this hour', detail: 'Above your 80 °C threshold at least once in the last hour.' },
+        { level: 'info', title: 'High utilization, low power draw', detail: 'Utilization counts time any kernel runs, not how many cores are busy.' },
+      ];
     if (multi) {
       insights.splice(1, 0, { level: 'warning', title: `GPU ${N - 1} well below the others`,
         detail: `Last 10 recorded min: GPU ${N - 1} 24% vs 81% mean on the other GPUs. If one job spans these GPUs (e.g. data-parallel training), this fits a straggler, an uneven data split, or a rank that is not using its GPU. If they run separate jobs, it is expected.` });
@@ -83,7 +101,7 @@
     const recent = [];
     for (let t = now - 3600e3; t <= now; t += 1000) {
       const u = util(t, k);
-      recent.push([t, Math.round(u), u > 10 ? 71 + rnd() * 2 : 32, 18 + rnd() * 22 + u * 0.2, 46 + rnd()]);
+      recent.push([t, Math.round(u), apple ? 5 + u * 0.035 + rnd() * 0.2 : u > 10 ? 71 + rnd() * 2 : 32, 18 + rnd() * 22 + u * 0.2, apple ? 56 + rnd() : 46 + rnd()]);
     }
     const start = Math.floor(now / 60000) * 60000 - (25 * 60 - 1) * 60000;
     const cells = [];
@@ -96,10 +114,16 @@
       { pid: 48211 + i, name: multi ? `python (rank ${i})` : 'python', usedMiB: Math.round(TOTAL * 0.6), gpuUuid: uuid(i) },
       ...(i === 0 ? [{ pid: 3102, name: 'jupyter-kernel', usedMiB: 1418, gpuUuid: uuid(0) }, { pid: 1931, name: 'Xorg', usedMiB: 312, gpuUuid: uuid(0) }] : []),
     ]).flat();
+    const macSpecs = { hostname: 'MacBook-Pro', os: 'macOS 15.1', kernel: '24.1.0', arch: 'arm64', uptimeSec: 71306,
+      cpu: { model: 'Apple M1 Pro', cores: 10, threads: 10, baseGHz: 2.06, maxGHz: 3.23 },
+      memory: { totalBytes: 32 * 2 ** 30, modules: ['32 GB · LPDDR5 · unified memory'] }, board: null, system: 'Apple MacBook Pro (14-inch, 2021)',
+      disks: [{ name: 'APPLE SSD AP1024R', sizeBytes: 1000555581440, type: 'NVMe' }],
+      gpus: [{ name: NAME, vramMiB: null, driver: null, vbios: null, cores: 16, metal: 'Metal 3', unifiedMemory: true, extra: ['Apple', 'built-in'] }],
+      cudaVersion: null, remote: null };
     return Object.assign(legacy ? a : {}, {
-      type: 'init', selected, vendor: 'nvidia', platform: 'linux', config: { tempWarn: 80, intervalMs: INTERVAL },
-      sample: sampleAt(now), recent, heatmap: { start, cells }, processes: procs, analysis: a,
-      specs: { hostname: multi ? 'dgx-node-07' : 'gpu-box-01', os: 'Ubuntu 22.04.4 LTS', kernel: '6.8.0-45-generic', arch: 'x64', uptimeSec: 71306,
+      type: 'init', selected, vendor: apple ? 'apple' : 'nvidia', platform: apple ? 'darwin' : 'linux', config: { tempWarn: 80, intervalMs: INTERVAL },
+      sample: sampleAt(now), recent, heatmap: { start, cells }, processes: apple ? [] : procs, analysis: a,
+      specs: apple ? macSpecs : { hostname: multi ? 'dgx-node-07' : 'gpu-box-01', os: 'Ubuntu 22.04.4 LTS', kernel: '6.8.0-45-generic', arch: 'x64', uptimeSec: 71306,
         cpu: { model: multi ? 'AMD EPYC 7742 64-Core' : 'Intel Core Ultra 7 265F', cores: multi ? 128 : 20, threads: multi ? 256 : 20, baseGHz: 2.4, maxGHz: 5.3 },
         memory: { totalBytes: 68344610816, modules: ['32 GB · DDR5 · 5600 MT/s · Micron Technology', '32 GB · DDR5 · 5600 MT/s · Micron Technology'] },
         board: 'HP 8D34', system: multi ? 'NVIDIA DGX A100' : 'HP OMEN 16L Gaming Desktop', disks: [{ name: 'SAMSUNG MZVL81T0HFLB', sizeBytes: 1024203640320, type: 'NVMe' }],

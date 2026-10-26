@@ -1,6 +1,8 @@
 import * as os from 'os';
 import si from 'systeminformation';
-import type { Specs } from '../types';
+import type { Specs, SpecsGpu } from '../types';
+import { macSpecsGpus } from './apple';
+import type { ExecFn } from './exec';
 
 function settled<T>(r: PromiseSettledResult<T>): T | undefined {
   return r.status === 'fulfilled' ? r.value : undefined;
@@ -11,12 +13,24 @@ function joinParts(...parts: (string | undefined | null)[]): string | null {
   return s.trim() || null;
 }
 
-/** Collect static machine specs. Each probe is independent; failures leave fields blank. */
+export interface SpecsOptions {
+  platform?: NodeJS.Platform;
+  /** Runs system_profiler on macOS (tests). */
+  exec?: ExecFn;
+}
+
+/**
+ * Collect static machine specs. Each probe is independent; failures leave fields blank.
+ * On macOS the GPUs come from `system_profiler SPDisplaysDataType -json` (core count, Metal
+ * family, unified memory); systeminformation's graphics() is the fallback.
+ */
 export async function collectSpecs(
   nvidia: { driver: string | null; cuda: string | null; vbios: string[] },
   remoteName: string | undefined,
+  opts: SpecsOptions = {},
 ): Promise<Specs> {
-  const [cpuR, osR, memR, layoutR, sysR, boardR, diskR, gfxR] = await Promise.allSettled([
+  const macP: Promise<SpecsGpu[]> = (opts.platform ?? process.platform) === 'darwin' ? macSpecsGpus(opts.exec) : Promise.resolve([]);
+  const [cpuR, osR, memR, layoutR, sysR, boardR, diskR, gfxR, macR] = await Promise.allSettled([
     si.cpu(),
     si.osInfo(),
     si.mem(),
@@ -24,8 +38,10 @@ export async function collectSpecs(
     si.system(),
     si.baseboard(),
     si.diskLayout(),
-    si.graphics(),
+    macP.then((m) => (m.length ? undefined : si.graphics())),
+    macP,
   ]);
+  const macGpus = settled(macR) ?? [];
   const cpu = settled(cpuR);
   const osi = settled(osR);
   const mem = settled(memR);
@@ -48,7 +64,7 @@ export async function collectSpecs(
     (c) => c.model && !/microsoft (remote|basic)|virtual|vmware svga/i.test(c.model),
   );
   let nvIndex = 0;
-  const gpus = controllers.map((c) => {
+  const gpus: SpecsGpu[] = macGpus.length ? macGpus : controllers.map((c) => {
     const isNv = /nvidia/i.test(`${c.vendor} ${c.model}`);
     const vbios = isNv ? nvidia.vbios[nvIndex++] : undefined;
     return {

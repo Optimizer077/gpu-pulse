@@ -1,8 +1,10 @@
 import { AmdLinuxCollector } from './collectors/amdLinux';
+import { AppleCollector } from './collectors/apple';
 import { CpuMemCollector } from './collectors/cpuMem';
+import type { ExecFn } from './collectors/exec';
 import { NvidiaCollector } from './collectors/nvidia';
 import { NvidiaStream, type SpawnFn } from './collectors/nvidiaStream';
-import type { GpuProcess, GpuSample, Sample } from './types';
+import type { GpuProcess, GpuSample, GpuVendor, Sample } from './types';
 
 const PROCESS_EVERY_MS = 5000;
 /** Consecutive stream failures before falling back to spawn-per-tick polling. */
@@ -23,6 +25,12 @@ export interface SamplerOptions {
   stream?: boolean;
   /** Injected process spawner for the stream (tests). */
   spawn?: SpawnFn;
+  /** Vendor reported for an injected gpuReader (default 'nvidia'). */
+  gpuVendor?: GpuVendor;
+  /** Platform used for backend selection (tests); process.platform by default. */
+  platform?: NodeJS.Platform;
+  /** Command runner for the macOS ioreg collector (tests, benchmark with fixtures). */
+  exec?: ExecFn;
 }
 
 /**
@@ -30,14 +38,17 @@ export interface SamplerOptions {
  *  - a long-lived `nvidia-smi --query-gpu ... -lms <interval>` stream (NVIDIA): a sample is
  *    emitted when every GPU of an interval has reported; restarted with backoff when it dies,
  *    replaced by polling after MAX_STREAM_RESTARTS consecutive failures; or
- *  - a self-rescheduling poll timer (AMD sysfs, CPU-only, fallback, injected reader). At most
- *    one poll tick runs at a time: `now()` during an in-flight tick joins it.
+ *  - a self-rescheduling poll timer (macOS ioreg, AMD sysfs, CPU-only, fallback, injected
+ *    reader). At most one poll tick runs at a time: `now()` during an in-flight tick joins it.
+ * Backend order: macOS IOAccelerator first on darwin, then nvidia-smi, then Linux amdgpu.
  * Independent of the vscode API so it can be smoke-tested from plain Node.
  */
 export class Sampler {
   readonly nvidia: NvidiaCollector;
+  readonly apple: AppleCollector;
   private readonly amd = new AmdLinuxCollector();
   private readonly cpuMem = new CpuMemCollector();
+  private readonly platform: NodeJS.Platform;
   private timer: NodeJS.Timeout | undefined;
   private running: Promise<void> | undefined;
   private intervalMs: number;
@@ -60,7 +71,7 @@ export class Sampler {
   private pollSince = 0;
   latest: Sample | undefined;
   processes: GpuProcess[] = [];
-  vendor: 'nvidia' | 'amd' | 'none' = 'none';
+  vendor: GpuVendor | 'none' = 'none';
   /** 'stream' while the long-lived nvidia-smi process is in use. */
   mode: 'stream' | 'poll' = 'poll';
 
@@ -71,6 +82,8 @@ export class Sampler {
     private readonly opts: SamplerOptions = {},
   ) {
     this.nvidia = new NvidiaCollector(nvidiaPath);
+    this.apple = new AppleCollector(opts.exec);
+    this.platform = opts.platform ?? process.platform;
     this.intervalMs = intervalMs;
   }
 
@@ -90,11 +103,13 @@ export class Sampler {
   }
 
   async start(): Promise<void> {
-    if (this.opts.gpuReader) this.vendor = 'nvidia';
+    if (this.opts.gpuReader) this.vendor = this.opts.gpuVendor ?? 'nvidia';
+    else if (this.platform === 'darwin' && (await this.apple.detect())) this.vendor = 'apple';
     else if (await this.nvidia.detect()) this.vendor = 'nvidia';
     else if (this.amd.detect()) this.vendor = 'amd';
     this.mode = this.streamAllowed() ? 'stream' : 'poll';
-    this.log(`GPU backend: ${this.opts.gpuReader ? 'synthetic' : this.vendor} (${this.mode === 'stream' ? 'nvidia-smi stream' : 'polling'})`);
+    const how = this.mode === 'stream' ? 'nvidia-smi stream' : this.vendor === 'apple' && !this.opts.gpuReader ? 'ioreg once per sample' : 'polling';
+    this.log(`GPU backend: ${this.opts.gpuReader ? 'synthetic' : this.vendor} (${how})`);
     this.started = true;
     if (this.stopped) return;
     if (this.mode === 'stream') this.startStream();
@@ -265,9 +280,11 @@ export class Sampler {
         ? await this.opts.gpuReader()
         : this.vendor === 'nvidia'
           ? await this.nvidia.sample()
-          : this.vendor === 'amd'
-            ? this.amd.sample()
-            : [];
+          : this.vendor === 'apple'
+            ? await this.apple.sample()
+            : this.vendor === 'amd'
+              ? this.amd.sample()
+              : [];
       this.lastError = null;
       return gpus;
     } catch (e) {

@@ -2,7 +2,7 @@
   "name": "gpu-pulse",
   "displayName": "GPU Pulse",
   "description": "Live GPU, CPU and memory dashboard with usage averages, utilization insights and machine specs. Works on Windows, Linux and Remote-SSH.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "gpu-pulse-dev",
   "license": "MIT",
   "repository": {
@@ -104,7 +104,7 @@
           "default": 500,
           "minimum": 250,
           "maximum": 10000,
-          "description": "Sampling interval while the dashboard is visible (milliseconds). NVIDIA GPUs are read through one long-lived nvidia-smi process, so short intervals stay cheap."
+          "description": "Sampling interval while the dashboard is visible (milliseconds). NVIDIA GPUs are read through one long-lived nvidia-smi process, so short intervals stay cheap. On macOS there is no streaming interface: every sample runs ioreg once, the next sample is scheduled after it finishes, so the effective floor is this interval plus the ioreg run time and each sample costs one short process."
         },
         "gpuPulse.backgroundIntervalMs": {
           "type": "number",

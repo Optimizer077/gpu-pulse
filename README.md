@@ -363,6 +363,8 @@ flowchart LR
 | AMD | Specs only | ✅ Utilization, VRAM, power, temperature (best effort) | ✅ (Linux host) |
 | None | CPU / RAM / disk / net / specs | Same | Same |
 
+**macOS (beta, 0.4.0):** Apple Silicon and Intel-Mac GPUs via `ioreg`. Shows utilization (device / renderer / tiler), GPU memory (unified on Apple Silicon), GPU core count and Metal version. Temperature, power, clocks, the process list and NVIDIA-only true-usage counters are not available on macOS and show as n/a. Not yet verified on Mac hardware; see the [v0.4.0-beta.1 pre-release](https://github.com/Optimizer077/gpu-pulse/releases/tag/v0.4.0-beta.1).
+
 ---
 
 ## FAQ / troubleshooting

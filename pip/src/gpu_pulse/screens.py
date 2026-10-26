@@ -33,6 +33,8 @@ METRICS = (
     ("DRAM bandwidth", "Memory bandwidth used vs peak. High here + low SM = memory-bound kernels."),
     ("FP32/FP16/FP64/INT", "Activity of each arithmetic pipe; shows which precision is doing the work."),
     ("VRAM", "Video memory allocated. 'Held idle' = VRAM allocated while utilization < 10%."),
+    ("GPU memory", "Apple Silicon: memory the GPU has in use, as a share of unified RAM. Temperature, power and "
+     "clocks need root (powermetrics) and show n/a."),
     ("Idle / busy", "Share of samples under 10% / at or above 70% utilization in a window."),
     ("Efficiency", "0–100 score for the last hour from utilization, SM activity and throttling."),
     ("Bottleneck", "What is holding the GPU back: input pipeline, CPU, power cap, thermal, memory…"),

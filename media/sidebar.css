@@ -37,6 +37,8 @@ button.sb-gpu:hover { border-color: var(--hair-strong); }
 .sb-vram { display: flex; align-items: center; gap: 6px; }
 .sb-vram .sb-bar { flex: 1; margin: 0; }
 .sb-num { font-family: var(--mono); font-size: 10px; color: var(--ink-2); white-space: nowrap; }
+.sb-mlbl { font-family: var(--mono); font-size: 9.5px; color: var(--muted); white-space: nowrap; }
+.sb-meta > span:empty { display: none; }
 .sb-meta { display: flex; gap: 10px; font-family: var(--mono); font-size: 10.5px; color: var(--ink); white-space: nowrap; overflow: hidden; }
 .sb-meta [data-f='avg'] { color: var(--muted); margin-left: auto; }
 

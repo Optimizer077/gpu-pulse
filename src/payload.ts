@@ -52,6 +52,7 @@ export interface InitContext {
   history: HistoryStore;
   sample: Sample | undefined;
   selected: string | undefined;
+  /** Sampler backend ('nvidia' | 'amd' | 'apple' | 'none'); the views word memory and processes by it. */
   vendor: string;
   processes: GpuProcess[];
   specs: Specs | undefined;
@@ -90,7 +91,11 @@ const r1 = (x: number | null) => (x === null ? null : Math.round(x * 10) / 10);
 export function compactSample(s: Sample): Sample {
   return {
     t: s.t,
-    gpus: s.gpus.map((g): GpuSample => ({ ...g, powerW: r1(g.powerW), memUsedMiB: g.memUsedMiB === null ? null : Math.round(g.memUsedMiB) })),
+    gpus: s.gpus.map((g): GpuSample => {
+      const c: GpuSample = { ...g, powerW: r1(g.powerW), memUsedMiB: g.memUsedMiB === null ? null : Math.round(g.memUsedMiB) };
+      if (typeof g.allocMiB === 'number') c.allocMiB = Math.round(g.allocMiB);
+      return c;
+    }),
     cpu: { util: Math.round(s.cpu.util * 10) / 10, perCore: s.cpu.perCore.map(Math.round) },
     mem: s.mem,
   };

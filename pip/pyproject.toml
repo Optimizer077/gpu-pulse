@@ -1,14 +1,15 @@
 [project]
 name = "gpu-pulse"
-version = "0.3.0"
+version = "0.4.0b1"
 description = "Terminal GPU dashboard: live usage, 5m/30m/1h/24h averages, utilization insights and machine specs."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "GPU Pulse contributors" }]
-keywords = ["gpu", "nvidia", "monitor", "terminal", "tui", "nvidia-smi", "machine-learning"]
+keywords = ["gpu", "nvidia", "monitor", "terminal", "tui", "nvidia-smi", "machine-learning", "apple-silicon", "macos"]
 classifiers = [
     "Environment :: Console",
+    "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",

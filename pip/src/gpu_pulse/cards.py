@@ -73,7 +73,8 @@ def confidence_meter(conf: float, cells: int = 5) -> Text:
     return t
 
 
-def session_line(sess: Any) -> Optional[Text]:
+def session_line(sess: Any, mem: str = "VRAM") -> Optional[Text]:
+    """``mem`` names the GPU's memory ("VRAM", or "GPU mem" on Apple Silicon)."""
     if sess is None:
         return None
     live = getattr(sess, "end", None) is None
@@ -81,7 +82,7 @@ def session_line(sess: Any) -> Optional[Text]:
     t.append("Session " if live else "Last session ", Style(color=R.MUTED))
     t.append(f"{getattr(sess, 'minutes', 0)} min", Style(color=R.INK, bold=True))
     t.append(f" · avg {getattr(sess, 'mean_util', 0):.0f}%", Style(color=R.INK))
-    t.append(f" · VRAM peak {getattr(sess, 'peak_vram_pct', 0):.0f}%", Style(color=R.MUTED))
+    t.append(f" · {mem} peak {getattr(sess, 'peak_vram_pct', 0):.0f}%", Style(color=R.MUTED))
     wh = getattr(sess, "energy_wh", None)
     if wh is not None:
         t.append(f" · {wh:.0f} Wh", Style(color=R.POWER_GLOW))
@@ -166,7 +167,7 @@ def diagnosis_card(
             t = _line(f"{R.LEVEL_ICON.get(ins.level, '·')} ", R.LEVEL_COLOR.get(ins.level, R.MUTED), True)
             t.append(ins.title, Style(color=R.INK))
             items.append((10 + k, 31 + k, [t]))
-    sess = session_line(getattr(diag, "session", None))
+    sess = session_line(getattr(diag, "session", None), g.mem_short if g else "VRAM")
     if sess is not None:
         items.append((5, 20, [sess]))
     fc = getattr(diag, "vram_forecast", None)
@@ -228,7 +229,9 @@ def diagnosis_detail(diag: Any, a: Analysis, g: Optional[GpuSample], width: int)
         rows.append(g_t)
     reasons = throttle_reasons(g, diag)
     th = Text("Throttling  ", Style(color=R.MUTED))
-    th.append_text(badges(reasons) if reasons else Text("none — clocks unconstrained", Style(color=R.MUTED)))
+    unseen = g is not None and g.vendor == "apple"  # macOS reports no clocks or throttle reasons without root
+    none = "not reported by this GPU (no clock or power readings)" if unseen else "none — clocks unconstrained"
+    th.append_text(badges(reasons) if reasons else Text(none, Style(color=R.MUTED)))
     rows.append(th)
 
     def section(title: str, items: Sequence[str], icon: str, color: str) -> None:
@@ -243,7 +246,8 @@ def diagnosis_detail(diag: Any, a: Analysis, g: Optional[GpuSample], width: int)
 
     section("WHY", list(getattr(diag, "evidence", ()) or ()), "▸", R.GPU_GLOW)
     section("WHAT TO TRY", list(getattr(diag, "actions", ()) or ()), "→", R.LEVEL_COLOR["good"])
-    extra = [x for x in (session_line(getattr(diag, "session", None)),) if x is not None]
+    mem = g.mem_short if g else "VRAM"
+    extra = [x for x in (session_line(getattr(diag, "session", None), mem),) if x is not None]
     fc = getattr(diag, "vram_forecast", None)
     if extra or fc:
         rows.append(Text())
@@ -285,14 +289,18 @@ def fallback_health(s: Sample, g: Optional[GpuSample], temp_warn: float, grade: 
         rows.append(HealthRow("GPU", "info" if state == "idle" else "good", R.fmt(u, 0, "%"), grade or state))
         v = g.vram_pct
         used = f"{(g.mem_used_mib or 0) / 1024:.1f} / {(g.mem_total_mib or 0) / 1024:.0f} GB"
-        rows.append(HealthRow("VRAM", _lvl(v, 85, 95), R.fmt(v, 0, "%"), used))
+        if g.unified_memory:
+            rows.append(HealthRow("GPU memory", _lvl(v, 85, 95), R.fmt(v, 0, "%"), f"{used} · unified"))
+        else:
+            rows.append(HealthRow("VRAM", _lvl(v, 85, 95), R.fmt(v, 0, "%"), used))
         t = g.temp_c
+        unread = t is None and g.vendor == "apple"
         rows.append(
             HealthRow(
                 "GPU temp",
                 _lvl(t, temp_warn - 10, temp_warn, "critical"),
-                R.fmt(t, 0, "°C"),
-                f"warn at {temp_warn:.0f}°C",
+                "n/a" if unread else R.fmt(t, 0, "°C"),
+                "not read on macOS" if unread else f"warn at {temp_warn:.0f}°C",
             )
         )
     hot_core = max(s.cpu_per_core, default=0.0)

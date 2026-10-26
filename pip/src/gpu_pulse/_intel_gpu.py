@@ -430,7 +430,9 @@ def gpu_calls(f: GpuFeat, temp_warn: float) -> list[Call]:
             ev.append(f"SMs {f.sm_mean:.0f}% active, Tensor Cores {f.tensor_mean or 0:.0f}% (GPM)")
         else:
             ev.append(UTIL_NOTE)
-        ev.append("No power or thermal throttle reasons reported")
+        sensed = f.clock_ratio is not None or f.power_mean is not None or f.temp_max is not None
+        # Apple GPUs report no clocks, power or temperature: absence of a limit is unknown, not "none".
+        ev.append("No power or thermal throttle reasons reported" if sensed else "Power and thermal limits not visible")
         out.append(
             Call(
                 "none",

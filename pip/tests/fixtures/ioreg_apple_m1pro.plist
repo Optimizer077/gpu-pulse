@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  RECONSTRUCTION, not a real capture: `ioreg -r -d 1 -w 0 -c IOAccelerator -a` on an M1 Pro-like Mac,
+  written from public tool sources and forum posts. Key names are likely but unverified.
+  Replace with a real capture: run scripts/mac_probe.py with its save-fixtures option on a Mac.
+-->
+<plist version="1.0">
+<array>
+	<dict>
+		<key>AGXParameterBufferMaxSize</key>
+		<integer>1610612736</integer>
+		<key>CFBundleIdentifier</key>
+		<string>com.apple.AGXG13X</string>
+		<key>GPUConfigurationVariable</key>
+		<dict>
+			<key>gpu_gen</key>
+			<integer>13</integer>
+			<key>num_cores</key>
+			<integer>16</integer>
+			<key>num_gps</key>
+			<integer>4</integer>
+		</dict>
+		<key>IOClass</key>
+		<string>AGXAcceleratorG13X</string>
+		<key>IOMatchCategory</key>
+		<string>IOAccelerator</string>
+		<key>IONameMatched</key>
+		<string>gpu,t6000</string>
+		<key>IOProviderClass</key>
+		<string>AppleARMIODevice</string>
+		<key>IORegistryEntryID</key>
+		<integer>4294968440</integer>
+		<key>MetalPluginName</key>
+		<string>AGXMetal13_3</string>
+		<key>PerformanceStatistics</key>
+		<dict>
+			<key>Alloc system memory</key>
+			<integer>2416852992</integer>
+			<key>Allocated PB Size</key>
+			<integer>201326592</integer>
+			<key>Device Utilization %</key>
+			<integer>23</integer>
+			<key>In use system memory</key>
+			<integer>1182793728</integer>
+			<key>In use system memory (driver)</key>
+			<integer>0</integer>
+			<key>Renderer Utilization %</key>
+			<integer>21</integer>
+			<key>SplitSceneCount</key>
+			<integer>0</integer>
+			<key>TiledSceneBytes</key>
+			<integer>2359296</integer>
+			<key>Tiler Utilization %</key>
+			<integer>9</integer>
+			<key>lastRecoveryTime</key>
+			<integer>0</integer>
+			<key>recoveryCount</key>
+			<integer>0</integer>
+		</dict>
+		<key>gpu-core-count</key>
+		<integer>16</integer>
+		<key>model</key>
+		<string>Apple M1 Pro</string>
+	</dict>
+</array>
+</plist>

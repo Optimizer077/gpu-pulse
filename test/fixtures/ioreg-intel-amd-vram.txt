@@ -1,0 +1,14 @@
+# RECONSTRUCTION, not a real capture: PCI devices printed by
+#   ioreg -r -d 1 -w 0 -k VRAM,totalMB
+# on the same Intel MacBook Pro as ioreg-intel-amd.txt (only the AMD dGPU carries the key here).
++-o GFX0@0  <class IOPCIDevice, id 0x1000002a8, registered, matched, active, busy 0 (12 ms), retain 34>
+    {
+      "IOName" = "display"
+      "vendor-id" = <02100000>
+      "device-id" = <40730000>
+      "model" = <"AMD Radeon Pro 5500M">
+      "VRAM,totalMB" = 8192
+      "ATY,EFIVersion" = <"01.01.186">
+      "IOPCIExpressLinkStatus" = 4163
+    }
+

@@ -50,7 +50,8 @@ def timeline(series: dict[str, list[Optional[float]]], g: Optional[GpuSample], w
         for label, key, color in (("SM", "sm", R.mix(R.GPU_GLOW, "#ffffff", 0.35)), ("TNS", "tensor", R.TENSOR_GLOW))
         if any(v is not None for v in series.get(key, ()))
     ]
-    extra = [("VRAM", "vram", R.VRAM_GLOW)] + extra
+    unified = g is not None and g.unified_memory
+    extra = [("MEM" if unified else "VRAM", "vram", R.VRAM_GLOW)] + extra
     extra = extra[: max(0, height - 4)]
     chart_h = max(2, height - 1 - len(extra))
     items = [(R.GPU_GLOW, "util", R.fmt(g.util if g else None, 0, "%"))]
@@ -58,7 +59,7 @@ def timeline(series: dict[str, list[Optional[float]]], g: Optional[GpuSample], w
         items.append((R.GPU_GLOW, "SM", R.fmt(g.sm_active, 0, "%")))
     if g is not None and g.tensor_active is not None:
         items.append((R.TENSOR_GLOW, "tensor", R.fmt(g.tensor_active, 0, "%")))
-    items.append((R.VRAM_GLOW, "VRAM", R.fmt(g.vram_pct if g else None, 0, "%")))
+    items.append((R.VRAM_GLOW, g.mem_short if g else "VRAM", R.fmt(g.vram_pct if g else None, 0, "%")))
     rows: list[RenderableType] = [legend(*items), R.area_chart(series["util"], width, chart_h, R.GPU, R.GPU_GLOW)]
     rows += [_spark_row(label, series[key], width, color) for label, key, color in extra]
     return Group(*rows)
@@ -122,6 +123,11 @@ def divergence(g: Optional[GpuSample]) -> Optional[tuple[str, str]]:
 def true_usage(g: Optional[GpuSample], width: int, height: int, columns: int = 1) -> Group:
     """GPM gauges in 1 or 2 columns, a one-line explanation and a divergence callout."""
     vals = [(name, getattr(g, attr, None), c, gl) for name, attr, c, gl in TRUE_METRICS]
+    if g is not None and g.vendor == "apple" and all(v is None for _, v, _, _ in vals):
+        return Group(
+            Text("SM-level counters are NVIDIA-only (GPM).", Style(color=R.MUTED), no_wrap=True, overflow="ellipsis"),
+            Text("See GPU LIVE: device, renderer, tiler.", Style(color=R.DIM), no_wrap=True, overflow="ellipsis"),
+        )
     if g is None or all(v is None for _, v, _, _ in vals):
         return Group(
             Text("True-usage counters not available on this GPU/driver (needs NVML GPM).", Style(color=R.MUTED)),
@@ -214,18 +220,24 @@ def usage_strip(
     return t
 
 
-def window_card(w: WindowStats, cells: Sequence[Optional[float]], width: int, height: int = 10) -> Group:
+def window_card(
+    w: WindowStats, cells: Sequence[Optional[float]], width: int, height: int = 10, g: Optional[GpuSample] = None
+) -> Group:
+    """One usage window; ``g`` (the live sample) marks sensors this GPU lacks as n/a, not 0."""
     big = Text(R.fmt(w.util, 1), Style(color=R.INK, bold=True))
     big.append(" % avg", Style(color=R.MUTED))
     idle, busy = w.idle_share or 0.0, w.busy_share or 0.0
     held = (w.held_idle_share or 0) * 100 if w.held_idle_share is not None else None
+    no_power = g is not None and g.power_w is None  # history stores a missing reading as 0
+    no_temp = g is not None and g.temp_c is None
+    mem = g.mem_short if g else "VRAM"
     return Group(
         big,
-        Text(f"peak {R.fmt(w.util_peak)}% · VRAM {R.fmt(w.vram)}%", Style(color=R.MUTED), no_wrap=True),
+        Text(f"peak {R.fmt(w.util_peak)}% · {mem} {R.fmt(w.vram)}%", Style(color=R.MUTED), no_wrap=True),
         _stack(w, width),
         Text(f"idle {idle * 100:.0f}%".ljust(max(0, width - 9)) + f"busy {busy * 100:.0f}%", Style(color=R.MUTED)),
-        kv("Avg power", f"{R.fmt(w.power)} W"),
-        kv("Peak temp", f"{R.fmt(w.temp_peak)} °C"),
+        kv("Avg power", "n/a" if no_power else f"{R.fmt(w.power)} W"),
+        kv("Peak temp", "n/a" if no_temp else f"{R.fmt(w.temp_peak)} °C"),
         kv("Held idle", f"{R.fmt(held)}%"),
         kv("CPU / RAM", f"{R.fmt(w.cpu)}% / {R.fmt(w.mem)}%"),
         R.sparkline(list(cells), width, R.GPU_GLOW)
@@ -327,16 +339,31 @@ def _onoff(v: Optional[bool]) -> str:
     return NA if v is None else ("on" if v else "off")
 
 
+def mac_gpu(d: Any) -> bool:
+    """Details came from macOS (system_profiler / ioreg) rather than NVML."""
+    return any(getattr(d, k, None) is not None for k in ("gpu_cores", "metal_family", "unified_memory"))
+
+
 def arch_summary(d: Any, g: Optional[GpuSample]) -> Text:
-    """One line: ``Blackwell · CC 12.0 · 4608 CUDA cores · 5th-gen Tensor · 448 GB/s · 23.7 TFLOPS``."""
-    parts = [
-        getattr(d, "architecture", None),
-        _f(getattr(d, "compute_capability", None), "CC {}", ""),
-        _f(getattr(d, "cuda_cores", None), "{:,} CUDA cores", ""),
-        _f(getattr(d, "tensor_core_gen", None), "{} Tensor", ""),
-        _f(getattr(d, "memory_bandwidth_gbs", None), "{:.0f} GB/s", ""),
-        _f(getattr(d, "fp32_tflops", None), "{:.1f} TFLOPS FP32", ""),
-    ]
+    """One line: ``Blackwell · CC 12.0 · 4608 CUDA cores · 5th-gen Tensor · 448 GB/s · 23.7 TFLOPS``,
+    or on a Mac ``Apple M1 Pro · 16-core GPU · Metal 3 · unified memory``."""
+    if mac_gpu(d):
+        name = getattr(d, "name", None) or (g.name if g else None)
+        parts = [
+            name.replace(" (simulated)", "") if name else None,
+            _f(getattr(d, "gpu_cores", None), "{}-core GPU", ""),
+            getattr(d, "metal_family", None),
+            "unified memory" if getattr(d, "unified_memory", None) else None,
+        ]
+    else:
+        parts = [
+            getattr(d, "architecture", None),
+            _f(getattr(d, "compute_capability", None), "CC {}", ""),
+            _f(getattr(d, "cuda_cores", None), "{:,} CUDA cores", ""),
+            _f(getattr(d, "tensor_core_gen", None), "{} Tensor", ""),
+            _f(getattr(d, "memory_bandwidth_gbs", None), "{:.0f} GB/s", ""),
+            _f(getattr(d, "fp32_tflops", None), "{:.1f} TFLOPS FP32", ""),
+        ]
     t = Text(no_wrap=True, overflow="ellipsis")
     shown = [p for p in parts if p]
     if not shown:
@@ -372,6 +399,8 @@ def arch_card(d: Any, g: Optional[GpuSample], width: int) -> Group:
         "COMPUTE",
         [
             ("Architecture", _f(getattr(d, "architecture", None)), R.INK),
+            ("GPU cores", _f(getattr(d, "gpu_cores", None)), R.INK),
+            ("Metal", _f(getattr(d, "metal_family", None)), R.INK),
             ("Compute cap.", _f(getattr(d, "compute_capability", None)), R.INK),
             ("CUDA cores", _f(getattr(d, "cuda_cores", None), "{:,}"), R.INK),
             ("SMs", _f(getattr(d, "sm_count", None)), R.INK),
@@ -381,10 +410,12 @@ def arch_card(d: Any, g: Optional[GpuSample], width: int) -> Group:
         ],
     )
     vram = getattr(d, "vram_total_mib", None) or (g.mem_total_mib if g else None)
+    unified = bool(getattr(d, "unified_memory", None))
     section(
         "MEMORY",
         [
-            ("VRAM", _f(vram, "{:,.0f} MiB") if vram is None else f"{vram / 1024:.1f} GB", R.INK),
+            ("GPU memory" if unified else "VRAM", NA if vram is None else f"{vram / 1024:.1f} GB", R.INK),
+            ("Unified", "yes (shared RAM)" if unified else NA, R.INK),
             ("Bus width", _f(getattr(d, "memory_bus_bits", None), "{}-bit"), R.INK),
             ("Bandwidth", _f(getattr(d, "memory_bandwidth_gbs", None), "{:.0f} GB/s"), R.INK),
             ("Max mem clock", _f(getattr(d, "max_mem_clock_mhz", None), "{:,.0f} MHz"), R.INK),
@@ -436,6 +467,8 @@ def arch_card(d: Any, g: Optional[GpuSample], width: int) -> Group:
     )
     if d is None:
         rows.append(Text("Reading architecture details…", Style(color=R.MUTED)))
+    elif unified:
+        rows.append(Text("Clocks, power and temperature need powermetrics (root): not read.", Style(color=R.DIM)))
     if rows:
         rows.append(Text())
     if width >= 56 and len(blocks) > 1:  # two balanced columns of sections
@@ -471,6 +504,20 @@ def gpu_live(g: Optional[GpuSample], width: int) -> Group:
         t.append(f" {value}", Style(color=R.INK, bold=True))
         return t
 
+    if g.vendor == "apple":  # IOAccelerator statistics: engine split and unified memory, no clocks/fans/PCIe
+        used, total = (g.mem_used_mib or 0) / 1024, (g.mem_total_mib or 0) / 1024
+        return Group(
+            row("Device", (g.util or 0) / 100, R.fmt(g.util, 0, "%")),
+            row("Renderer", (g.renderer_util or 0) / 100, R.fmt(g.renderer_util, 0, "%")),
+            row("Tiler", (g.tiler_util or 0) / 100, R.fmt(g.tiler_util, 0, "%"), R.TEMP, R.TEMP_GLOW),
+            row("GPU mem", (g.vram_pct or 0) / 100, f"{used:.1f}/{total:.0f} GB", R.VRAM, R.VRAM_GLOW),
+            Text(
+                "unified memory · clocks, fan and power need powermetrics (root)",
+                Style(color=R.MUTED),
+                no_wrap=True,
+                overflow="ellipsis",
+            ),
+        )
     rows: list[RenderableType] = [
         row("SM clock", (g.clock_mhz or 0) / (g.clock_max_mhz or 1), f"{R.fmt(g.clock_mhz)} MHz"),
         row("Mem bus", (g.mem_util or 0) / 100, f"{R.fmt(g.mem_util)}%"),

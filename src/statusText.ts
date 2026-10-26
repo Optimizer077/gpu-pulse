@@ -33,8 +33,19 @@ export function alertLines(a: AlertSummary | undefined, now = Date.now()): strin
 const dash = (v: number | null | undefined, d = 0) => (v === null || v === undefined ? '–' : v.toFixed(d));
 const shortName = (n: string) => n.replace(/^NVIDIA (GeForce )?/, '');
 
+/**
+ * Used/total for VRAM. Unified memory (Apple Silicon) shows only what the GPU holds: the
+ * total is all of system RAM, which reads like free VRAM that is not really the GPU's.
+ */
 function vramGb(g: GpuSample): string {
+  if (g.unifiedMemory) return g.memUsedMiB !== null ? `${(g.memUsedMiB / 1024).toFixed(1)} GB` : '–';
   return g.memUsedMiB !== null && g.memTotalMiB ? `${(g.memUsedMiB / 1024).toFixed(1)}/${(g.memTotalMiB / 1024).toFixed(0)} GB` : '–';
+}
+
+/** Tooltip memory phrase: "12.0/24 GB" (VRAM) or "GPU mem 2.1 GB of 32 GB unified". */
+function memPhrase(g: GpuSample): string {
+  if (!g.unifiedMemory) return vramGb(g);
+  return `GPU mem ${vramGb(g)}${g.memTotalMiB ? ` of ${Math.round(g.memTotalMiB / 1024)} GB unified` : ''}`;
 }
 
 function cpuLine(s: Sample): string {
@@ -53,11 +64,17 @@ export function statusView(s: Sample, tempWarn: number, alerts?: AlertSummary): 
 
   if (gs.length === 1) {
     const g = gs[0];
-    const vram = g.memUsedMiB !== null && g.memTotalMiB ? ` · ${(g.memUsedMiB / 1024).toFixed(1)}/${Math.round(g.memTotalMiB / 1024)} GB` : '';
+    const vram = g.unifiedMemory
+      ? g.memUsedMiB !== null ? ` · ${vramGb(g)}` : ''
+      : g.memUsedMiB !== null && g.memTotalMiB ? ` · ${(g.memUsedMiB / 1024).toFixed(1)}/${Math.round(g.memTotalMiB / 1024)} GB` : '';
     const temp = g.tempC !== null ? ` · ${Math.round(g.tempC)}°C` : '';
+    // Readings a backend never reports (macOS: temperature, power) are left out, not shown as "–".
+    const parts = [`${dash(g.util)}% util`, memPhrase(g)];
+    if (g.tempC !== null || g.vendor !== 'apple') parts.push(`${dash(g.tempC)} °C`);
+    if (g.powerW !== null || g.vendor !== 'apple') parts.push(`${dash(g.powerW)} W`);
     const tooltip =
       '**GPU Pulse**\n\n' +
-      `$(circuit-board) ${g.name} — ${dash(g.util)}% util, ${vramGb(g)}, ${dash(g.tempC)} °C, ${dash(g.powerW)} W\n\n` +
+      `$(circuit-board) ${g.name} — ${parts.join(', ')}\n\n` +
       cpuLine(s) +
       alertLines(alerts, s.t) +
       '_Click to open the dashboard_';
@@ -69,13 +86,20 @@ export function statusView(s: Sample, tempWarn: number, alerts?: AlertSummary): 
   const max = utils.length ? Math.max(...utils) : null;
   const text =
     `$(pulse) GPU ×${gs.length} avg ${dash(avg)}% · max ${dash(max)}%` + (hottest !== null ? ` · hottest ${Math.round(hottest)}°C` : '');
+  // macOS reports neither temperature nor power for most GPUs: drop columns no GPU fills.
+  const showTemp = temps.length > 0 || gs.some((g) => g.vendor !== 'apple');
+  const showPower = gs.some((g) => g.powerW !== null || g.vendor !== 'apple');
+  const memHead = gs.some((g) => g.unifiedMemory) ? 'GPU mem' : 'VRAM';
   const rows = gs.map((g) => {
     const hot = g.tempC !== null && g.tempC >= tempWarn ? ' $(flame)' : '';
-    return `| ${g.index} · ${shortName(g.name)} | ${dash(g.util)}% | ${vramGb(g)} | ${dash(g.tempC)} °C${hot} | ${dash(g.powerW)} W |`;
+    return `| ${g.index} · ${shortName(g.name)} | ${dash(g.util)}% | ${vramGb(g)} |` +
+      (showTemp ? ` ${dash(g.tempC)} °C${hot} |` : '') + (showPower ? ` ${dash(g.powerW)} W |` : '');
   });
+  const head = `| GPU | Util | ${memHead} |${showTemp ? ' Temp |' : ''}${showPower ? ' Power |' : ''}\n` +
+    `|:--|--:|--:|${showTemp ? '--:|' : ''}${showPower ? '--:|' : ''}\n`;
   const tooltip =
     `**GPU Pulse** — ${gs.length} GPUs\n\n` +
-    '| GPU | Util | VRAM | Temp | Power |\n|:--|--:|--:|--:|--:|\n' +
+    head +
     rows.join('\n') +
     '\n\n' +
     cpuLine(s) +

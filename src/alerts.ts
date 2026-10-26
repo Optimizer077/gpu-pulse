@@ -93,9 +93,15 @@ function resetTimers(st: GpuState, gapMs: number): void {
   if (gapMs < 0 || gapMs >= JOB_END_MS) dropJob(st);
 }
 
+/**
+ * Share of GPU memory in use. On unified memory (Apple Silicon) memTotalMiB is all of system
+ * RAM and memUsedMiB what the GPU driver holds, so vramFull / idleHeld compare GPU-allocated
+ * memory with the unified total: "held" there means memory the GPU has allocated.
+ */
 const vramPct = (g: GpuSample): number | null =>
   g.memUsedMiB !== null && g.memTotalMiB !== null && g.memTotalMiB > 0 ? (g.memUsedMiB / g.memTotalMiB) * 100 : null;
 const gb = (mib: number | null, d: number) => (mib === null ? '–' : (mib / 1024).toFixed(d));
+const memName = (g: GpuSample) => (g.unifiedMemory ? 'memory' : 'VRAM');
 
 export class AlertEngine {
   private cfg: AlertConfig;
@@ -185,7 +191,8 @@ export class AlertEngine {
       this.step(g, st, st.vramFull, 'vramFull', t, out, VRAM_HOLD_MS,
         pct !== null && pct >= VRAM_FULL_PCT,
         pct !== null && pct < VRAM_CLEAR_PCT,
-        () => ({ level: 'warning', title: `GPU ${g.index} VRAM nearly full (${gb(g.memUsedMiB, 1)}/${gb(g.memTotalMiB, 0)} GB)`,
+        () => ({ level: 'warning',
+          title: `GPU ${g.index} ${memName(g)} nearly full (${gb(g.memUsedMiB, 1)}/${gb(g.memTotalMiB, 0)} GB${g.unifiedMemory ? ' unified' : ''})`,
           detail: `Above ${VRAM_FULL_PCT}% for over ${VRAM_HOLD_MS / 1000} s; new allocations may fail with out-of-memory errors.` }));
     }
     if (c.idleHeld) {
@@ -194,7 +201,7 @@ export class AlertEngine {
         util !== null && pct !== null && util < IDLE_UTIL && pct >= IDLE_VRAM_PCT,
         (util !== null && util >= IDLE_CLEAR_UTIL) || (pct !== null && pct < IDLE_CLEAR_VRAM_PCT),
         () => ({ level: 'info',
-          title: `GPU ${g.index} idle for ${Math.round((t - st.idleHeld.since!) / 60_000)} min while holding ${gb(g.memUsedMiB, 1)} GB of VRAM`,
+          title: `GPU ${g.index} idle for ${Math.round((t - st.idleHeld.since!) / 60_000)} min while holding ${gb(g.memUsedMiB, 1)} GB of ${g.unifiedMemory ? 'unified memory' : 'VRAM'}`,
           detail: 'An open notebook kernel or a finished script may still hold this memory; free it to let others use the GPU.' }));
     }
     if (c.jobFinished) this.job(g, st, t, dt, out);

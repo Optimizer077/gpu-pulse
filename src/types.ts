@@ -1,9 +1,26 @@
+/**
+ * Where a GPU reading came from: nvidia-smi, Linux amdgpu sysfs, or macOS IOAccelerator
+ * (`ioreg`; Apple Silicon, and the Intel/AMD GPUs of Intel Macs).
+ */
+export type GpuVendor = 'nvidia' | 'amd' | 'apple';
+
 /** One GPU reading at a single instant. Missing values are `null`. */
 export interface GpuSample {
   index: number;
   uuid: string;
   name: string;
-  vendor: 'nvidia' | 'amd';
+  vendor: GpuVendor;
+  /**
+   * Memory is system RAM shared with the CPU (Apple Silicon, Intel integrated graphics):
+   * memUsedMiB is what the GPU driver holds of it and memTotalMiB is all of system RAM, so
+   * every "VRAM %" (gauges, history, alerts, insights) means GPU-allocated share of unified memory.
+   */
+  unifiedMemory?: boolean;
+  /** Apple Silicon only (ioreg PerformanceStatistics): renderer / tiler utilization %, GPU cores, allocated MiB. */
+  rendererUtil?: number | null;
+  tilerUtil?: number | null;
+  coreCount?: number | null;
+  allocMiB?: number | null;
   util: number | null; // %
   memUtil: number | null; // % memory-controller busy
   memUsedMiB: number | null;
@@ -89,6 +106,18 @@ export interface Insight {
   detail: string;
 }
 
+export interface SpecsGpu {
+  name: string;
+  vramMiB: number | null;
+  driver: string | null;
+  vbios: string | null;
+  extra: string[];
+  /** macOS (system_profiler): GPU core count, Metal family ("Metal 3"), memory shared with the CPU. */
+  cores?: number | null;
+  metal?: string | null;
+  unifiedMemory?: boolean;
+}
+
 export interface Specs {
   hostname: string;
   os: string;
@@ -100,7 +129,7 @@ export interface Specs {
   board: string | null;
   system: string | null;
   disks: { name: string; sizeBytes: number; type: string }[];
-  gpus: { name: string; vramMiB: number | null; driver: string | null; vbios: string | null; extra: string[] }[];
+  gpus: SpecsGpu[];
   cudaVersion: string | null;
   remote: string | null;
 }

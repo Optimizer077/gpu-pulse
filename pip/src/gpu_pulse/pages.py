@@ -35,6 +35,19 @@ def _pct(v: Optional[float]) -> str:
     return R.fmt(v, 0, "%")
 
 
+def missing_reason(g: GpuSample, what: str) -> str:
+    """Why a ring has no reading: macOS exposes no GPU temperature/power without root."""
+    if g.vendor == "apple":
+        return "needs powermetrics (root)" if what == "power" else "not read on macOS"
+    return "not reported"
+
+
+def mem_ring_title(g: GpuSample, width: int) -> str:
+    if not g.unified_memory:
+        return "VRAM"
+    return "GPU MEMORY (UNIFIED)" if width >= 24 else "GPU MEMORY"
+
+
 # ---- rings (every sample, Overview only) ---------------------------------------------------
 def rings(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> None:
     hour = a.windows[2]
@@ -54,7 +67,10 @@ def rings(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> 
             side.append(("SM", _pct(g.sm_active)))
         if g.tensor_active is not None:
             side.append(("tensor", _pct(g.tensor_active)))
-        side += [("clock", f"{R.fmt(g.clock_mhz)} MHz"), ("state", g.pstate or "–")]
+        if g.renderer_util is not None or g.tiler_util is not None:  # Apple GPUs: engine split, no clocks
+            side += [("renderer", _pct(g.renderer_util)), ("tiler", _pct(g.tiler_util))]
+        if g.clock_mhz is not None or g.pstate is not None or g.vendor != "apple":
+            side += [("clock", f"{R.fmt(g.clock_mhz)} MHz"), ("state", g.pstate or "–")]
         gpu.set_target(
             g.util,
             caption,
@@ -64,36 +80,48 @@ def rings(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> 
         )
         gpu.set_state("normal", f"◆ 1h {hour.util:.0f}%" if hour.util is not None else "")
         used, total = (g.mem_used_mib or 0) / 1024, (g.mem_total_mib or 0) / 1024
-        q("#ring-vram", RingGauge).set_target(
+        vram = q("#ring-vram", RingGauge)
+        set_border(vram, title=mem_ring_title(g, vram.size.width))
+        mem_side = [("used", f"{used:.1f} GB"), ("total", f"{total:.1f} GB"), ("1h avg", _pct(hour.vram))]
+        if g.mem_util is not None or not g.unified_memory:
+            mem_side.append(("bus", _pct(g.mem_util)))
+        vram.set_target(
             g.vram_pct,
             f"{used:.1f} / {total:.0f} GB",
-            f"1h avg {hour.vram:.0f}%" if hour.vram is not None else "",
-            side=(("used", f"{used:.1f} GB"), ("total", f"{total:.1f} GB"), ("1h avg", _pct(hour.vram)),
-                  ("bus", _pct(g.mem_util))),
-        )  # fmt: skip
+            ("unified · " if g.unified_memory else "") + (f"1h avg {hour.vram:.0f}%" if hour.vram is not None else ""),
+            side=tuple(mem_side),
+        )
         warn = app.mon.cfg.temp_warn
         temp = q("#ring-temp", RingGauge)
-        temp.set_target(
-            g.temp_c,
-            "GPU core",
-            f"1h peak {hour.temp_peak:.0f}°C" if hour.temp_peak else "",
-            max_value=max(100.0, warn + 10),
-            side=(("1h peak", R.fmt(hour.temp_peak, 0, "°C")), ("warn at", f"{warn:.0f}°C"), ("fan", _pct(g.fan_pct))),
-        )
-        t = g.temp_c or 0
-        temp.set_state(
-            *(("hot", "⬣ over limit") if t >= warn else ("warn", "▲ near limit") if t >= warn - 10 else ("normal", ""))
-        )
+        if g.temp_c is None:  # no sensor reading (Apple GPUs): say so instead of a 0 °C dial
+            side_t = (("sensor", "n/a"), ("warn at", f"{warn:.0f}°C"))
+            temp.set_target(None, "n/a", missing_reason(g, "temp"), side=side_t)
+            temp.set_state("normal", "")
+        else:
+            temp.set_target(
+                g.temp_c,
+                "GPU core",
+                f"1h peak {hour.temp_peak:.0f}°C" if hour.temp_peak else "",
+                max_value=max(100.0, warn + 10),
+                side=(("1h peak", R.fmt(hour.temp_peak, 0, "°C")), ("warn at", f"{warn:.0f}°C"),
+                      ("fan", _pct(g.fan_pct))),
+            )  # fmt: skip
+            t = g.temp_c
+            state = ("hot", "⬣ over limit") if t >= warn else ("warn", "▲ near limit") if t >= warn - 10 else None
+            temp.set_state(*(state or ("normal", "")))
         power = q("#ring-power", RingGauge)
         capped = any("power" in r.lower() for r in C.throttle_reasons(g, app.diag))
-        power.set_target(
-            g.power_w,
-            f"of {R.fmt(g.power_limit_w)} W cap",
-            f"1h avg {hour.power:.0f} W" if hour.power else "",
-            max_value=g.power_limit_w or 100.0,
-            side=(("cap", f"{R.fmt(g.power_limit_w)} W"), ("1h avg", R.fmt(hour.power, 0, " W")),
-                  ("draw", _pct((g.power_w or 0) / g.power_limit_w * 100 if g.power_limit_w else None))),
-        )  # fmt: skip
+        if g.power_w is None:
+            power.set_target(None, "n/a", missing_reason(g, "power"), side=(("draw", "n/a"), ("cap", "n/a")))
+        else:
+            power.set_target(
+                g.power_w,
+                f"of {R.fmt(g.power_limit_w)} W cap",
+                f"1h avg {hour.power:.0f} W" if hour.power else "",
+                max_value=g.power_limit_w or 100.0,
+                side=(("cap", f"{R.fmt(g.power_limit_w)} W"), ("1h avg", R.fmt(hour.power, 0, " W")),
+                      ("draw", _pct((g.power_w or 0) / g.power_limit_w * 100 if g.power_limit_w else None))),
+            )  # fmt: skip
         power.set_state("warn", "⚡ power capped") if capped else power.set_state("normal", "")
     hot = max(s.cpu_per_core, default=0.0)
     cpu_side = [("max core", f"{hot:.0f}%"), ("threads", str(len(s.cpu_per_core)))]
@@ -259,8 +287,11 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
         procs = _panel(app, "procs")
         mine = [p for p in app.mon.processes if not g or p.gpu_uuid == g.uuid]
         set_border(procs, title=f"GPU PROCESSES · {len(mine)}")
-        if app.mon.vendor != "nvidia" and not app.mon.cfg.demo:
-            procs.update(Text("Process listing needs an NVIDIA GPU (NVML).", Style(color=R.MUTED)))
+        if not app.mon.has_processes:
+            msg = "Process listing needs an NVIDIA GPU (NVML)" + (
+                "; not available on macOS." if app.mon.vendor == "apple" else "."
+            )
+            procs.update(Text(msg, Style(color=R.MUTED)))
         elif not mine:
             procs.update(Text("No compute processes on this GPU.", Style(color=R.MUTED)))
         else:
@@ -268,7 +299,7 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
     elif tab == "history":
         for i, w in enumerate(a.windows):
             wp = _panel(app, f"win{i}")
-            wp.update(P.window_card(w, cells[-w.minutes :], wp.inner_width, wp.inner_height))
+            wp.update(P.window_card(w, cells[-w.minutes :], wp.inner_width, wp.inner_height, g))
         heat = _panel(app, "heat")
         set_border(heat, title=f"24-HOUR ACTIVITY{_tag(app, s, g)} · one cell per minute")
         col_w = 2 if heat.inner_width >= 126 else 1
@@ -284,7 +315,7 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
         runs = C.find_sessions(start, cells)
         sp = _panel(app, "sessions")
         set_border(sp, title=f"SESSIONS · last 24 h · {len(runs)}")
-        head = C.session_line(getattr(d, "session", None))
+        head = C.session_line(getattr(d, "session", None), g.mem_short if g else "VRAM")
         body = C.sessions_table(runs, sp.inner_width, 12)
         sp.update(Group(head, Text(), body) if head is not None else body)
     elif tab == "diagnosis":

@@ -15,12 +15,13 @@ from rich.text import Text
 
 from . import render as R
 from .fleet import aggregate
-from .models import GpuSample, Sample, WindowStats
+from .fleetview import mem_total_label
+from .models import UNIFIED_LABEL, GpuSample, Sample, WindowStats
 from .monitor import Analysis, Monitor
 
 
 def _metric(label: str, frac: Optional[float], value: str, color: str, glow: str, width: int) -> Text:
-    t = Text(f"{label:<6}", Style(color=R.MUTED))
+    t = Text(f"{label:<6}" if len(label) <= 6 else f"{label} ", Style(color=R.MUTED))
     t.append_text(R.bar(frac, width, color, glow))
     t.append(f" {value}", Style(color=R.INK, bold=True))
     return t
@@ -34,7 +35,15 @@ def _bar_width(console_width: int) -> int:
 def gpu_block(g: GpuSample, hour: Optional[WindowStats], bw: int) -> Group:
     head = Text(f"GPU {g.index}  ", Style(color=R.MUTED))
     head.append(g.name, Style(color=R.INK, bold=True))
-    extra = " · ".join(x for x in [g.pstate, f"PCIe {g.pcie_gen}.0 x{g.pcie_width}" if g.pcie_gen else None] if x)
+    extra = " · ".join(
+        x
+        for x in [
+            g.pstate,
+            f"PCIe {g.pcie_gen}.0 x{g.pcie_width}" if g.pcie_gen else None,
+            UNIFIED_LABEL if g.unified_memory else None,
+        ]
+        if x
+    )
     if extra:
         head.append(f"   {extra}", Style(color=R.MUTED))
     if hour and hour.util is not None:
@@ -46,7 +55,7 @@ def gpu_block(g: GpuSample, hour: Optional[WindowStats], bw: int) -> Group:
     grid.add_row(
         _metric("Util", (g.util or 0) / 100, f"{R.fmt(g.util)}%", R.GPU, R.GPU_GLOW, bw),
         _metric(
-            "VRAM",
+            g.mem_short,
             (vram or 0) / 100,
             f"{R.fmt(vram)}% {(g.mem_used_mib or 0) / 1024:.1f}/{(g.mem_total_mib or 0) / 1024:.0f}G",
             R.VRAM,
@@ -55,9 +64,12 @@ def gpu_block(g: GpuSample, hour: Optional[WindowStats], bw: int) -> Group:
         ),
     )
     power_frac = (g.power_w or 0) / g.power_limit_w if g.power_limit_w else 0
+    # A missing sensor (Apple GPUs report no temperature or power without root) reads n/a, not "–°C".
+    temp = "n/a" if g.temp_c is None else f"{R.fmt(g.temp_c)}°C"
+    power = "n/a" if g.power_w is None else f"{R.fmt(g.power_w)}/{R.fmt(g.power_limit_w)}W"
     grid.add_row(
-        _metric("Temp", (g.temp_c or 0) / 100, f"{R.fmt(g.temp_c)}°C", R.RAM, R.RAM_GLOW, bw),
-        _metric("Power", power_frac, f"{R.fmt(g.power_w)}/{R.fmt(g.power_limit_w)}W", R.CPU, R.CPU_GLOW, bw),
+        _metric("Temp", (g.temp_c or 0) / 100, temp, R.RAM, R.RAM_GLOW, bw),
+        _metric("Power", power_frac, power, R.CPU, R.CPU_GLOW, bw),
     )
     return Group(head, grid)
 
@@ -67,7 +79,7 @@ def aggregate_line(gpus: Sequence[GpuSample]) -> Text:
     agg = aggregate(gpus)
     t = Text(f"All {agg.count} GPUs  ", Style(color=R.MUTED))
     t.append(f"avg {R.fmt(agg.util_mean)}%", Style(color=R.GPU_GLOW, bold=True))
-    t.append(f" · VRAM {agg.vram_used_gib:.1f}/{agg.vram_total_gib:.1f} GB", Style(color=R.INK))
+    t.append(f" · {mem_total_label(gpus)} {agg.vram_used_gib:.1f}/{agg.vram_total_gib:.1f} GB", Style(color=R.INK))
     if agg.power_w is not None:
         cap = f"/{agg.power_limit_w:.0f}" if agg.power_limit_w else ""
         t.append(f" · {agg.power_w:.0f}{cap} W", Style(color=R.INK))
@@ -128,7 +140,12 @@ def run_status(mon: Monitor, console: Optional[Console] = None) -> None:
     if len(s.gpus) > 1:
         parts += [aggregate_line(s.gpus), Text()]
     if not s.gpus:
-        parts.append(Text("No supported GPU detected (NVIDIA via NVML, or AMD amdgpu on Linux).", Style(color=R.MUTED)))
+        parts.append(
+            Text(
+                "No supported GPU detected (NVIDIA via NVML, AMD amdgpu on Linux, or a Mac GPU via ioreg).",
+                Style(color=R.MUTED),
+            )
+        )
     cpu_ram = Table.grid(padding=(0, 2))
     cpu_ram.add_column(no_wrap=True)
     cpu_ram.add_column(no_wrap=True)

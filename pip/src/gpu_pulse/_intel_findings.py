@@ -214,12 +214,13 @@ def gpu_health(
     v = g.vram_pct
     if v is not None:
         vval = f"{v:.0f}%"
+        name = "GPU memory" if g.unified_memory else "VRAM"  # Apple Silicon: a share of unified memory
         if v >= 95:
-            out.append(("VRAM", "serious", vval, "Nearly full: out-of-memory risk"))
+            out.append((name, "serious", vval, "Nearly full: out-of-memory risk"))
         elif forecast:
-            out.append(("VRAM", "warning", vval, forecast))
+            out.append((name, "warning", vval, forecast))
         elif bottleneck == "vram_held":
-            out.append(("VRAM", "warning", vval, "Held while the GPU idles"))
+            out.append((name, "warning", vval, "Held while the GPU idles"))
         else:
-            out.append(("VRAM", "good", vval, "Healthy"))
+            out.append((name, "good", vval, "Healthy · unified" if g.unified_memory else "Healthy"))
     return out

@@ -22,3 +22,4 @@ release/**
 docs/**
 .claude/**
 .github/**
+gpu-pulse-probe/**

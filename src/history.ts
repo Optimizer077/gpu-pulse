@@ -5,6 +5,8 @@ const RECENT_MS = 60 * MINUTE;
 export const IDLE_UTIL = 10;
 export const BUSY_UTIL = 70;
 // High enough that a desktop's own compositor/app usage (~20–35%) doesn't count as "held".
+// On unified memory (Apple Silicon) the percentage is GPU-allocated memory of all system RAM
+// (memTotalMiB = RAM size), so "held" means memory the GPU driver has allocated.
 export const HELD_VRAM = 50;
 
 interface GpuAcc {

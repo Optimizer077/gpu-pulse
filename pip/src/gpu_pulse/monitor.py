@@ -10,7 +10,8 @@ from typing import Literal, Optional
 
 from platformdirs import user_data_dir
 
-from .collectors import AmdLinuxCollector, NvidiaCollector, SystemCollector, collect_specs
+from .collectors import AmdLinuxCollector, AppleCollector, NvidiaCollector, SystemCollector, collect_specs
+from .collectors.apple import MIN_INTERVAL_S as APPLE_MIN_INTERVAL_S
 from .collectors.system import SystemExtras
 from .fleet import Fleet, analyze_fleet
 from .history import HistoryFile, HistoryStore
@@ -22,6 +23,12 @@ logger = logging.getLogger(__name__)
 
 WINDOWS: tuple[tuple[str, int], ...] = (("5 min", 5), ("30 min", 30), ("1 hour", 60), ("24 hours", 1440))
 SAVE_EVERY_S = 60.0
+Vendor = Literal["nvidia", "amd", "apple", "none"]
+DemoVendor = Literal["nvidia", "apple"]
+# Shortest sampling interval per collector. Apple GPUs are read by spawning `ioreg` once per sample,
+# so the dashboard's 0.5 s default is raised to 1 s there until the real cost is measured on a Mac
+# (scripts/mac_probe.py prints it). NVML and sysfs reads are in-process and cheap: no floor.
+VENDOR_MIN_INTERVAL_S: dict[str, float] = {"apple": APPLE_MIN_INTERVAL_S}
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,7 @@ class MonitorConfig:
     persist: bool = True  # write history back to disk
     demo: bool = False  # simulated GPU + seeded history; never touches the real history file
     demo_gpus: int = 1  # number of simulated GPUs in demo mode
+    demo_vendor: DemoVendor = "nvidia"  # "apple": a simulated Apple GPU read through the Apple parser
 
 
 @dataclass(frozen=True)
@@ -48,21 +56,25 @@ def default_history_path() -> Path:
 
 class Monitor:
     def __init__(self, cfg: MonitorConfig) -> None:
-        self.cfg = cfg
         self.nvidia = NvidiaCollector()
         self.amd = AmdLinuxCollector()
+        self.apple = AppleCollector()
         self.system = SystemCollector()
-        self.vendor: Literal["nvidia", "amd", "none"] = "none"
-        if self.nvidia.detect():
-            self.vendor = "nvidia"
-        elif self.amd.detect():
-            self.vendor = "amd"
+        self.vendor: Vendor = "apple" if cfg.demo and cfg.demo_vendor == "apple" else self._detect()
+        # The NVIDIA demo spawns nothing, even on a Mac; the Apple demo keeps the real collector's pace.
+        floor = VENDOR_MIN_INTERVAL_S.get(cfg.demo_vendor if cfg.demo else self.vendor, 0.0)
+        if cfg.interval_s < floor:
+            msg = "%s GPU: sampling every %.1f s (not %.1f s): each read spawns a process"
+            logger.info(msg, self.vendor, floor, cfg.interval_s)
+            cfg = replace(cfg, interval_s=floor)
+        self.cfg = cfg
         self.history = HistoryStore(cfg.history_days)
         self.file = HistoryFile(cfg.history_path or default_history_path())
         if cfg.demo:
             from .demo import demo_history
+            from .demo_apple import demo_apple_history
 
-            self.history.load(demo_history(n=cfg.demo_gpus))
+            self.history.load(demo_apple_history() if cfg.demo_vendor == "apple" else demo_history(n=cfg.demo_gpus))
         else:
             # Always read existing history; `persist` only controls writing (status/export are read-only).
             self.history.load(self.file.read())
@@ -73,14 +85,32 @@ class Monitor:
         self._last_save = time.monotonic()
         self._last_procs = 0.0
 
+    @property
+    def has_processes(self) -> bool:
+        """A per-GPU process list exists: NVML (or the NVIDIA-style demo). Not on macOS or AMD sysfs."""
+        return self.vendor == "nvidia" or (self.cfg.demo and self.cfg.demo_vendor != "apple")
+
+    def _detect(self) -> Vendor:
+        """The first collector that finds a GPU; on macOS the IORegistry (Apple GPUs) goes first."""
+        if self.apple.detect():  # False at once off macOS (no process spawned)
+            return "apple"
+        if self.nvidia.detect():
+            return "nvidia"
+        return "amd" if self.amd.detect() else "none"
+
     def _read_gpus(self) -> tuple[GpuSample, ...]:
         if self.cfg.demo:
             from .demo import demo_gpus
+            from .demo_apple import demo_apple_gpus
 
+            if self.cfg.demo_vendor == "apple":
+                return demo_apple_gpus(time.time())
             return demo_gpus(time.time(), self.cfg.demo_gpus)
         try:
             if self.vendor == "nvidia":
                 return self.nvidia.sample()
+            if self.vendor == "apple":
+                return self.apple.sample()
             return self.amd.sample() if self.vendor == "amd" else ()
         except Exception as e:  # noqa: BLE001 - a failed read must not stop recording
             logger.warning("GPU read failed: %s", e)
@@ -125,7 +155,7 @@ class Monitor:
             if self.cfg.demo:
                 from .demo import demo_processes
 
-                self.processes = demo_processes(gpus)
+                self.processes = demo_processes(gpus) if self.has_processes else []
             elif self.vendor == "nvidia":
                 self.processes = self.nvidia.processes()
         if self.cfg.persist and not self.cfg.demo and time.monotonic() - self._last_save >= SAVE_EVERY_S:
@@ -156,11 +186,13 @@ class Monitor:
         if self._details is None:
             if self.cfg.demo:
                 from .demo import demo_details_all
+                from .demo_apple import demo_apple_details
 
-                self._details = demo_details_all(self.cfg.demo_gpus)
-            elif self.vendor == "nvidia":
+                apple = self.cfg.demo_vendor == "apple"
+                self._details = demo_apple_details() if apple else demo_details_all(self.cfg.demo_gpus)
+            elif self.vendor in ("nvidia", "apple"):
                 try:
-                    self._details = self.nvidia.details()
+                    self._details = self.nvidia.details() if self.vendor == "nvidia" else self.apple.details()
                 except Exception as e:  # noqa: BLE001 - details are informational
                     logger.warning("GPU details read failed: %s", e)
                     self._details = []
@@ -176,7 +208,7 @@ class Monitor:
     def fleet(self) -> Fleet:
         """Cross-GPU comparison (stragglers, uneven VRAM, lone throttling, PCIe links); empty for one GPU."""
         # The process list (NVML or demo) tells GPUs running one job apart from unrelated ones.
-        procs = self.processes if self.cfg.demo or self.vendor == "nvidia" else None
+        procs = self.processes if self.has_processes else None
         return analyze_fleet(self.history, self.gpu_details(), processes=procs)
 
     def analysis(self, gpu_uuid: Optional[str]) -> Analysis:

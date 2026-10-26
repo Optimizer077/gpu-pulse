@@ -13,3 +13,5 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .claude/
+# scripts/mac-probe.sh output
+gpu-pulse-probe/

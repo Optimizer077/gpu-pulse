@@ -53,7 +53,7 @@
         <span class="sb-ring"><canvas aria-hidden="true"></canvas><span class="sb-ring-v"><b data-f="util">–</b><small>%</small></span></span>
         <span class="sb-info">
           <span class="sb-name"><span class="sb-idx">GPU ${g.index}</span><span class="sb-model" title="${esc(g.name)}">${esc(shortName(g.name))}</span></span>
-          <span class="sb-vram"><span class="sb-bar"><span class="vram" data-f="vbar"></span></span><span class="sb-num" data-f="vram">–</span></span>
+          <span class="sb-vram" title="${g.unifiedMemory ? 'GPU memory (unified): held by the GPU / system RAM' : 'VRAM used / total'}">${g.unifiedMemory ? '<span class="sb-mlbl">GPU mem</span>' : ''}<span class="sb-bar"><span class="vram" data-f="vbar"></span></span><span class="sb-num" data-f="vram">–</span></span>
           <span class="sb-meta"><span data-f="temp">–</span><span data-f="power">–</span><span data-f="avg"></span></span>
         </span></${tag}>`).join('');
     rows.clear();
@@ -84,8 +84,10 @@
       txt(r.f.util, fmt(g.util));
       width(r.f.vbar, g.memTotalMiB ? (g.memUsedMiB / g.memTotalMiB) * 100 : 0);
       txt(r.f.vram, `${gib(g.memUsedMiB)}/${gib(g.memTotalMiB)} GB`);
-      txt(r.f.temp, g.tempC == null ? '– °C' : `${fmt(g.tempC)} °C`);
-      txt(r.f.power, g.powerW == null ? '– W' : `${fmt(g.powerW)} W`);
+      // macOS reports neither temperature nor power: leave them out instead of showing "– °C".
+      const mac = g.vendor === 'apple';
+      txt(r.f.temp, g.tempC == null ? (mac ? '' : '– °C') : `${fmt(g.tempC)} °C`);
+      txt(r.f.power, g.powerW == null ? (mac ? '' : '– W') : `${fmt(g.powerW)} W`);
       const a = avg.get(g.uuid);
       txt(r.f.avg, a == null ? '' : `10m ${fmt(a)}%`);
       const hot = g.tempC != null && g.tempC >= warn;

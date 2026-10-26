@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import platform
 import socket
+import subprocess
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -177,7 +178,23 @@ def _cpu_model() -> str:
             return str(winreg.QueryValueEx(key, "ProcessorNameString")[0]).strip()
         except OSError:
             pass
+    if platform.system() == "Darwin":  # platform.processor() is just "arm" / "i386" on macOS
+        out = _sysctl("machdep.cpu.brand_string")
+        if out:
+            return out
     return platform.processor() or "Unknown CPU"
+
+
+def _sysctl(name: str) -> Optional[str]:
+    """``sysctl -n <name>`` on macOS (no shell, 2 s timeout); None when unavailable."""
+    try:
+        r = subprocess.run(
+            ["/usr/sbin/sysctl", "-n", name], stdin=subprocess.DEVNULL, capture_output=True, timeout=2, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = r.stdout.decode("utf-8", "replace").strip() if r.returncode == 0 else ""
+    return text or None
 
 
 def _os_name() -> str:
@@ -191,6 +208,10 @@ def _os_name() -> str:
         ver = platform.version()
         major = "11" if int(ver.split(".")[-1] or 0) >= 22000 else platform.release()
         return f"Windows {major} ({ver})"
+    if platform.system() == "Darwin":
+        mac = platform.mac_ver()[0]
+        if mac:
+            return f"macOS {mac}"
     return f"{platform.system()} {platform.release()}"
 
 
@@ -209,7 +230,10 @@ def _disks() -> tuple[str, ...]:
 
 
 def collect_specs(gpu_names: tuple[str, ...], driver: Optional[str], cuda: Optional[str]) -> Specs:
-    freq = psutil.cpu_freq()
+    try:
+        freq = psutil.cpu_freq()  # not implemented / raising on some Apple Silicon psutil builds
+    except (OSError, RuntimeError, AttributeError, NotImplementedError):
+        freq = None
     max_ghz = round(freq.max / 1000, 2) if freq and freq.max else None
     return Specs(
         hostname=socket.gethostname(),

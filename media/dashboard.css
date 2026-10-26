@@ -194,6 +194,7 @@ body.vscode-light .card { box-shadow: 0 1px 0 0 #fff inset, 0 12px 30px -22px rg
 .gauge .val { font-family: var(--mono); font-weight: 600; font-size: clamp(20px, 3.2vw, 34px); letter-spacing: -.02em; line-height: 1; color: var(--ink); }
 .gauge.big .val { font-size: clamp(30px, 5vw, 58px); }
 .gauge .val sup { font-size: .42em; color: var(--ink-2); margin-left: 2px; vertical-align: .9em; }
+.gauge .val .na { font-size: .6em; font-weight: 500; letter-spacing: .02em; color: var(--muted); }
 .gauge .lbl { margin-top: 6px; font-family: var(--display); font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--muted); }
 .gauge .extra { margin-top: 3px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
 .grade {

@@ -19,7 +19,7 @@ from rich.text import Text
 from . import render as R
 from ._intel_gpu import POWER_REASONS, THERMAL_REASONS
 from .fleet import MIN_SPAN_S, Fleet, aggregate, gpu_flag, span_text
-from .models import GpuSample
+from .models import UNIFIED_LABEL, GpuSample
 
 SELECT_BG = "#1b2a3a"
 TWO_COL_MIN = 170  # inner width needed for two GPUs per line
@@ -52,6 +52,11 @@ def fleet_height(n: int, width: int, height: int = 200) -> int:
     """Outer height of the panel (border + GPU lines + summary line); 0 for a single GPU."""
     lines = fleet_lines(n, width, height)
     return lines + 3 if lines else 0
+
+
+def mem_total_label(gpus: Sequence[GpuSample]) -> str:
+    """Memory label for machine totals: "GPU memory (unified)" when every GPU is Apple Silicon, else "VRAM"."""
+    return UNIFIED_LABEL if gpus and all(g.unified_memory for g in gpus) else "VRAM"
 
 
 def short_name(name: str) -> str:
@@ -101,7 +106,7 @@ def gpu_row(g: GpuSample, selected: bool, fleet: Optional[Fleet], width: int, te
     t.append(f" {R.fmt(g.util, 0, '%'):>4}", R.style(R.INK, True))
     if g.sm_active is not None and width >= 80:
         t.append(f" SM {g.sm_active:>3.0f}%", R.style(R.GPU_GLOW))
-    t.append("  VRAM ", R.style(R.MUTED))
+    t.append(f"  {g.mem_short} ", R.style(R.MUTED))
     v = g.vram_pct
     if vb:
         t.append_text(R.bar((v or 0) / 100, vb, R.VRAM, R.VRAM_GLOW))
@@ -141,7 +146,7 @@ def summary_line(gpus: Sequence[GpuSample], fleet: Optional[Fleet], width: int) 
     right = Text(no_wrap=True)
     if agg.util_mean is not None:
         right.append(f"avg {agg.util_mean:.0f}%", R.style(R.INK, True))
-    right.append(f" · VRAM {agg.vram_used_gib:.0f}/{agg.vram_total_gib:.0f} GB", R.style(R.MUTED))
+    right.append(f" · {mem_total_label(gpus)} {agg.vram_used_gib:.0f}/{agg.vram_total_gib:.0f} GB", R.style(R.MUTED))
     if agg.power_w is not None:
         cap = f"/{agg.power_limit_w:.0f}" if agg.power_limit_w else ""
         right.append(f" · {agg.power_w:.0f}{cap} W", R.style(R.MUTED))
