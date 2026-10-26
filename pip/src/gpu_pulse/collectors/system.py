@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import platform
 import socket
+import sys
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -169,7 +170,7 @@ def _cpu_model() -> str:
                         return line.split(":", 1)[1].strip()
         except OSError:
             pass
-    if platform.system() == "Windows":
+    if sys.platform == "win32":
         try:
             import winreg
 

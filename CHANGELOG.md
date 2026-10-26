@@ -2,6 +2,14 @@
 
 CPU figures are measured on one machine (RTX 5060 Ti, Core Ultra 7 265F, Windows 11) and expressed as a share of one CPU core. Your numbers will differ.
 
+## Unreleased
+
+- Apple Silicon / Metal support in the terminal dashboard and VS Code extension using unprivileged macOS IORegistry readings.
+- Live GPU utilization, shared GPU allocation, history and job-finished alerts. Unsupported sensors remain unavailable.
+- History preserves missing memory/power/temperature readings through save/reload, merges and CSV exports instead of reporting zero.
+- macOS integration tests handle current VS Code bundles whose executable is named `Code`.
+- Extension packages exclude local Python environments and tool caches.
+
 ## 0.3.0
 
 ### Alerts (both tools, same rules)

@@ -10,7 +10,7 @@ from typing import Literal, Optional
 
 from platformdirs import user_data_dir
 
-from .collectors import AmdLinuxCollector, NvidiaCollector, SystemCollector, collect_specs
+from .collectors import AmdLinuxCollector, AppleMetalCollector, NvidiaCollector, SystemCollector, collect_specs
 from .collectors.system import SystemExtras
 from .fleet import Fleet, analyze_fleet
 from .history import HistoryFile, HistoryStore
@@ -51,12 +51,15 @@ class Monitor:
         self.cfg = cfg
         self.nvidia = NvidiaCollector()
         self.amd = AmdLinuxCollector()
+        self.apple = AppleMetalCollector()
         self.system = SystemCollector()
-        self.vendor: Literal["nvidia", "amd", "none"] = "none"
+        self.vendor: Literal["nvidia", "amd", "apple", "none"] = "none"
         if self.nvidia.detect():
             self.vendor = "nvidia"
         elif self.amd.detect():
             self.vendor = "amd"
+        elif self.apple.detect():
+            self.vendor = "apple"
         self.history = HistoryStore(cfg.history_days)
         self.file = HistoryFile(cfg.history_path or default_history_path())
         if cfg.demo:
@@ -81,6 +84,8 @@ class Monitor:
         try:
             if self.vendor == "nvidia":
                 return self.nvidia.sample()
+            if self.vendor == "apple":
+                return self.apple.sample()
             return self.amd.sample() if self.vendor == "amd" else ()
         except Exception as e:  # noqa: BLE001 - a failed read must not stop recording
             logger.warning("GPU read failed: %s", e)

@@ -44,8 +44,11 @@ class _GpuAcc:
     util: float = 0.0
     util_max: float = 0.0
     vram: float = 0.0
+    vram_n: int = 0
     power: float = 0.0
+    power_n: int = 0
     temp_max: float = 0.0
+    temp_n: int = 0
     idle: int = 0
     busy: int = 0
     held_idle: int = 0
@@ -60,13 +63,16 @@ def _gpu_bucket(g: _GpuAcc) -> dict[str, Any]:
         "n": g.n,
         "util": _r2(g.util / g.n),
         "utilMax": g.util_max,
-        "vram": _r2(g.vram / g.n),
-        "power": _r2(g.power / g.n),
+        "vram": _r2(g.vram / g.vram_n) if g.vram_n else 0.0,
+        "power": _r2(g.power / g.power_n) if g.power_n else 0.0,
         "tempMax": g.temp_max,
         "idle": g.idle,
         "busy": g.busy,
         "heldIdle": g.held_idle,
     }
+    for key, count in (("vramN", g.vram_n), ("powerN", g.power_n), ("tempN", g.temp_n)):
+        if count != g.n:
+            out[key] = count
     # Optional keys: absent when GPM is unsupported, and absent in files written by the VS Code extension.
     if g.sm_n:
         out["sm"] = _r2(g.sm / g.sm_n)
@@ -113,6 +119,13 @@ def _merge(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
             "busy": x["busy"] + g["busy"],
             "heldIdle": x["heldIdle"] + g["heldIdle"],
         }
+        for metric, count_key in (("vram", "vramN"), ("power", "powerN"), ("tempMax", "tempN")):
+            xn, gn = x.get(count_key, x["n"]), g.get(count_key, g["n"])
+            count = xn + gn
+            merged[metric] = (max(x[metric] if xn else 0, g[metric] if gn else 0) if metric == "tempMax"
+                              else _r2((x[metric] * xn + g[metric] * gn) / count) if count else 0.0)
+            if count != n:
+                merged[count_key] = count
         for k in _OPT_KEYS:  # weighted by sample count when both sides have it, else whichever does
             if k in x and k in g:
                 merged[k] = w(k)
@@ -149,6 +162,10 @@ def _normalize(m: Any) -> Optional[dict[str, Any]]:
                 o = _num(g.get(k))
                 if o is not None and 0 <= o <= 100:
                     entry[k] = o
+            for k in ("vramN", "powerN", "tempN"):
+                count = _num(g.get(k))
+                if count is not None and 0 <= count <= entry["n"]:
+                    entry[k] = int(count)
             gpus[str(uid)] = entry
     return {"t": minute_start(t), "n": int(n), "cpu": cpu, "mem": mem, "gpus": gpus}
 
@@ -192,8 +209,11 @@ class HistoryStore:
             ga.util += g.util
             ga.util_max = max(ga.util_max, g.util)
             ga.vram += v
+            ga.vram_n += g.vram_pct is not None
             ga.power += g.power_w or 0.0
+            ga.power_n += g.power_w is not None
             ga.temp_max = max(ga.temp_max, g.temp_c or 0.0)
+            ga.temp_n += g.temp_c is not None
             ga.idle += g.util < IDLE_UTIL
             ga.busy += g.util >= BUSY_UTIL
             ga.held_idle += g.util < IDLE_UTIL and v >= HELD_VRAM
@@ -259,6 +279,7 @@ class HistoryStore:
         to = minute_start((now if now is not None else time.time()) * 1000)
         frm = to - (minutes - 1) * MINUTE_MS
         covered = n = cn = idle = busy = held = sm_n = tensor_n = 0
+        vram_n = power_n = 0
         util = vram = power = cpu = mem = sm = tensor = 0.0
         peak: Optional[float] = None
         temp: Optional[float] = None
@@ -274,11 +295,15 @@ class HistoryStore:
                 continue
             n += g["n"]
             util += g["util"] * g["n"]
-            vram += g["vram"] * g["n"]
-            power += g["power"] * g["n"]
+            vn, pn = g.get("vramN", g["n"]), g.get("powerN", g["n"])
+            vram += g["vram"] * vn
+            power += g["power"] * pn
+            vram_n += vn
+            power_n += pn
             idle, busy, held = idle + g["idle"], busy + g["busy"], held + g["heldIdle"]
             peak = max(peak or 0.0, g["utilMax"])
-            temp = max(temp or 0.0, g["tempMax"])
+            if g.get("tempN", g["n"]):
+                temp = max(temp or 0.0, g["tempMax"])
             if "sm" in g:
                 sm, sm_n = sm + g["sm"] * g["n"], sm_n + g["n"]
             if "tensor" in g:
@@ -289,12 +314,12 @@ class HistoryStore:
             covered_minutes=covered,
             util=util / n if n else None,
             util_peak=peak,
-            vram=vram / n if n else None,
-            power=power / n if n else None,
+            vram=vram / vram_n if vram_n else None,
+            power=power / power_n if power_n else None,
             temp_peak=temp,
             idle_share=idle / n if n else None,
             busy_share=busy / n if n else None,
-            held_idle_share=held / n if n else None,
+            held_idle_share=held / vram_n if vram_n else None,
             cpu=cpu / cn if cn else None,
             mem=mem / cn if cn else None,
             sm=sm / sm_n if sm_n else None,
@@ -317,7 +342,8 @@ class HistoryStore:
             i = (b["t"] - start) // MINUTE_MS
             g = b["gpus"].get(gpu) if gpu else next(iter(b["gpus"].values()), None)
             if 0 <= i < count and g:
-                cells[i] = g.get(metric)
+                counter = {"vram": "vramN", "power": "powerN", "tempMax": "tempN"}.get(metric)
+                cells[i] = g.get(metric) if counter is None or g.get(counter, g["n"]) else None
         return start, cells
 
     # ---- persistence ----
@@ -376,6 +402,10 @@ class HistoryStore:
                     if g
                     else [b["n"], "", "", "", "", ""]
                 )
+                if g:
+                    for pos, key in ((3, "vramN"), (4, "powerN"), (5, "tempN")):
+                        if not g.get(key, g["n"]):
+                            vals[pos] = ""
                 rows.append(",".join(str(x) for x in [ts, uid, *vals, b["cpu"], b["mem"]]))
         return "\n".join(rows) + "\n"
 

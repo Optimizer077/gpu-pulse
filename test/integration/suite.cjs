@@ -48,6 +48,11 @@ exports.run = async function run() {
   await sleep(1500);
   console.log(`GPU Pulse integration: sampler vendor=${api.sampler.vendor} mode=${api.sampler.mode} latest=${api.sampler.latest ? 'yes' : 'no'}`);
   assert.ok(api.sampler.latest, 'sampler produced a sample');
+  if (process.env.GPU_PULSE_EXPECT_VENDOR) {
+    assert.strictEqual(api.sampler.vendor, process.env.GPU_PULSE_EXPECT_VENDOR, 'requested hardware backend active');
+    assert.ok(api.sampler.latest.gpus.length > 0, 'hardware GPU produced readings');
+    assert.ok(api.sampler.latest.gpus.every((g) => Number.isFinite(g.util)), 'hardware utilization is available');
+  }
 
   // History is persisted on deactivate; check the storage dir exists after a sample cycle.
   const storage = path.join(ext.extensionPath, '..');

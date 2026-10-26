@@ -15,7 +15,7 @@ class GpuSample:
     index: int
     uuid: str
     name: str
-    vendor: Literal["nvidia", "amd"]
+    vendor: Literal["nvidia", "amd", "apple"]
     util: Optional[float] = None  # %
     mem_util: Optional[float] = None  # % memory-controller busy
     mem_used_mib: Optional[float] = None

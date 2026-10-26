@@ -1,7 +1,7 @@
 {
   "name": "gpu-pulse",
   "displayName": "GPU Pulse",
-  "description": "Live GPU, CPU and memory dashboard with usage averages, utilization insights and machine specs. Works on Windows, Linux and Remote-SSH.",
+  "description": "Live GPU, CPU and memory dashboard with usage averages, utilization insights and machine specs. Works on Windows, Linux, macOS and Remote-SSH.",
   "version": "0.3.0",
   "publisher": "gpu-pulse-dev",
   "license": "MIT",

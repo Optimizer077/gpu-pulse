@@ -64,11 +64,15 @@ def rings(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> 
         )
         gpu.set_state("normal", f"◆ 1h {hour.util:.0f}%" if hour.util is not None else "")
         used, total = (g.mem_used_mib or 0) / 1024, (g.mem_total_mib or 0) / 1024
+        shared = g.vendor == "apple"
+        set_border(q("#ring-vram", RingGauge), title="GPU MEMORY" if shared else "VRAM")
         q("#ring-vram", RingGauge).set_target(
             g.vram_pct,
-            f"{used:.1f} / {total:.0f} GB",
+            f"{R.fmt(g.mem_used_mib / 1024 if g.mem_used_mib is not None else None, 1)} GB shared"
+            if shared else f"{used:.1f} / {total:.0f} GB",
             f"1h avg {hour.vram:.0f}%" if hour.vram is not None else "",
-            side=(("used", f"{used:.1f} GB"), ("total", f"{total:.1f} GB"), ("1h avg", _pct(hour.vram)),
+            side=(("used", f"{used:.1f} GB"), ("total", "shared RAM" if shared else f"{total:.1f} GB"),
+                  ("1h avg", _pct(hour.vram)),
                   ("bus", _pct(g.mem_util))),
         )  # fmt: skip
         warn = app.mon.cfg.temp_warn
@@ -260,7 +264,9 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
         mine = [p for p in app.mon.processes if not g or p.gpu_uuid == g.uuid]
         set_border(procs, title=f"GPU PROCESSES · {len(mine)}")
         if app.mon.vendor != "nvidia" and not app.mon.cfg.demo:
-            procs.update(Text("Process listing needs an NVIDIA GPU (NVML).", Style(color=R.MUTED)))
+            message = ("Per-process GPU usage is unavailable from macOS IORegistry."
+                       if app.mon.vendor == "apple" else "Process listing needs an NVIDIA GPU (NVML).")
+            procs.update(Text(message, Style(color=R.MUTED)))
         elif not mine:
             procs.update(Text("No compute processes on this GPU.", Style(color=R.MUTED)))
         else:

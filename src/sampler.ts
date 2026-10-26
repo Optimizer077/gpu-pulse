@@ -1,4 +1,5 @@
 import { AmdLinuxCollector } from './collectors/amdLinux';
+import { AppleMetalCollector } from './collectors/appleMetal';
 import { CpuMemCollector } from './collectors/cpuMem';
 import { NvidiaCollector } from './collectors/nvidia';
 import { NvidiaStream, type SpawnFn } from './collectors/nvidiaStream';
@@ -37,6 +38,7 @@ export interface SamplerOptions {
 export class Sampler {
   readonly nvidia: NvidiaCollector;
   private readonly amd = new AmdLinuxCollector();
+  readonly apple = new AppleMetalCollector();
   private readonly cpuMem = new CpuMemCollector();
   private timer: NodeJS.Timeout | undefined;
   private running: Promise<void> | undefined;
@@ -60,7 +62,7 @@ export class Sampler {
   private pollSince = 0;
   latest: Sample | undefined;
   processes: GpuProcess[] = [];
-  vendor: 'nvidia' | 'amd' | 'none' = 'none';
+  vendor: 'nvidia' | 'amd' | 'apple' | 'none' = 'none';
   /** 'stream' while the long-lived nvidia-smi process is in use. */
   mode: 'stream' | 'poll' = 'poll';
 
@@ -93,6 +95,7 @@ export class Sampler {
     if (this.opts.gpuReader) this.vendor = 'nvidia';
     else if (await this.nvidia.detect()) this.vendor = 'nvidia';
     else if (this.amd.detect()) this.vendor = 'amd';
+    else if (await this.apple.detect()) this.vendor = 'apple';
     this.mode = this.streamAllowed() ? 'stream' : 'poll';
     this.log(`GPU backend: ${this.opts.gpuReader ? 'synthetic' : this.vendor} (${this.mode === 'stream' ? 'nvidia-smi stream' : 'polling'})`);
     this.started = true;
@@ -267,7 +270,9 @@ export class Sampler {
           ? await this.nvidia.sample()
           : this.vendor === 'amd'
             ? this.amd.sample()
-            : [];
+            : this.vendor === 'apple'
+              ? await this.apple.sample()
+              : [];
       this.lastError = null;
       return gpus;
     } catch (e) {

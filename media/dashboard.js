@@ -54,7 +54,7 @@
 
   function gaugeHtml(id, label, big) {
     return `<div class="gauge${big ? ' big' : ''}"><canvas id="g-${id}" aria-hidden="true"></canvas>
-      <div class="read"><div class="val" id="v-${id}">–</div><div class="lbl">${label}</div><div class="extra" id="x-${id}"></div>${big ? '<div id="grade"></div>' : ''}</div></div>`;
+      <div class="read"><div class="val" id="v-${id}">–</div><div class="lbl" id="l-${id}">${label}</div><div class="extra" id="x-${id}"></div>${big ? '<div id="grade"></div>' : ''}</div></div>`;
   }
 
   function shell() {
@@ -125,7 +125,7 @@
   shell();
   const E = {};
   for (const id of ['host', 'remote', 'alerts', 'live', 'rate', 'fleet', 'fleet-sub', 'fleet-row', 'gpu-name', 'pstate', 'readouts', 'grade',
-    'v-util', 'x-util', 'v-vram', 'x-vram', 'v-temp', 'x-temp', 'v-power', 'x-power', 'lg-gpu', 'lg-cpu', 'insights', 'windows',
+    'v-util', 'x-util', 'v-vram', 'x-vram', 'l-vram', 'v-temp', 'x-temp', 'v-power', 'x-power', 'lg-gpu', 'lg-cpu', 'insights', 'windows',
     'cores', 'mem-txt', 'mem-bar', 'specs', 'proc-sub', 'procs']) E[id] = document.getElementById(id);
 
   const tip = P.makeTip();
@@ -282,14 +282,15 @@
     const hour = state.windows[2];
     if (g) {
       txt(E['gpu-name'], `${g.name}${gpus().length > 1 ? ` · GPU ${g.index}` : ''}`);
-      txt(E.pstate, [g.pstate, g.pcieGen ? `PCIe ${g.pcieGen}.0 x${g.pcieWidth}` : null].filter(Boolean).join(' · '));
+      txt(E.pstate, [g.vendor === 'apple' ? 'Metal · unified memory' : null, g.pstate, g.pcieGen ? `PCIe ${g.pcieGen}.0 x${g.pcieWidth}` : null].filter(Boolean).join(' · '));
       gauges.util.set(g.util, hour?.util);
       html(E['v-util'], `${fmt(g.util)}<sup>%</sup>`);
       txt(E['x-util'], hour?.util != null ? `▲ 1h avg ${fmt(hour.util)}%` : '');
       const vp = g.memTotalMiB ? (g.memUsedMiB / g.memTotalMiB) * 100 : null;
       gauges.vram.set(vp);
-      html(E['v-vram'], `${fmt(vp)}<sup>%</sup>`);
-      txt(E['x-vram'], `${mibGb(g.memUsedMiB)} / ${mibGb(g.memTotalMiB)} GB`);
+      txt(E['l-vram'], g.vendor === 'apple' ? 'GPU memory' : 'VRAM');
+      html(E['v-vram'], g.vendor === 'apple' ? `${mibGb(g.memUsedMiB)}<sup>GB</sup>` : `${fmt(vp)}<sup>%</sup>`);
+      txt(E['x-vram'], g.vendor === 'apple' ? `${mibGb(g.memUsedMiB)} GB shared · GPU allocation` : `${mibGb(g.memUsedMiB)} / ${mibGb(g.memTotalMiB)} GB`);
       if (gauges.temp.opt.warn !== state.config.tempWarn) { gauges.temp.opt.warn = state.config.tempWarn; gauges.temp.draw(); }
       gauges.temp.set(g.tempC);
       html(E['v-temp'], `${fmt(g.tempC)}<sup>°C</sup>`);
@@ -395,7 +396,7 @@
     const noMem = list.length && list.every((p) => p.usedMiB == null);
     txt(E['proc-sub'], list.length ? `${list.length} using this GPU${noMem && state.platform === 'win32' ? ' · per-process VRAM is not reported by Windows (WDDM)' : ''}` : '');
     if (state.vendor !== 'nvidia') {
-      html(E.procs, '<div class="empty">Process listing needs an NVIDIA GPU with nvidia-smi.</div>');
+      html(E.procs, `<div class="empty">${state.vendor === 'apple' ? 'Per-process GPU usage is unavailable from macOS IORegistry.' : 'Process listing needs an NVIDIA GPU with nvidia-smi.'}</div>`);
       return;
     }
     html(E.procs, list.length

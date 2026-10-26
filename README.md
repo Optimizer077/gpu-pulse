@@ -12,7 +12,7 @@ Live GPU, CPU and memory dashboards with usage history, *true* GPU utilization, 
 [![License: MIT](https://img.shields.io/badge/license-MIT-0ca30c)](LICENSE)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%E2%89%A5%201.85-8e74e4)](#vs-code-extension)
 [![Python](https://img.shields.io/badge/python-%E2%89%A5%203.9-d27019)](#terminal-dashboard-gpu-pulse)
-[![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20Remote--SSH-d24d8a)](#platform-support)
+[![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS%20%7C%20Remote--SSH-d24d8a)](#platform-support)
 
 [Install](#install) · [Features](#features) · [True usage](#why-utilization-isnt-enough) · [Diagnosis](#bottleneck-diagnosis) · [Usage](#usage) · [How it works](#how-it-works) · [FAQ](#faq--troubleshooting)
 
@@ -357,11 +357,33 @@ flowchart LR
 
 ## Platform support
 
-| GPU | Windows | Linux | Remote-SSH / WSL |
-|---|---|---|---|
-| NVIDIA | ✅ Full (per-process VRAM hidden by WDDM) | ✅ Full | ✅ |
-| AMD | Specs only | ✅ Utilization, VRAM, power, temperature (best effort) | ✅ (Linux host) |
-| None | CPU / RAM / disk / net / specs | Same | Same |
+| GPU | Windows | Linux | macOS | Remote-SSH / WSL |
+|---|---|---|---|---|
+| NVIDIA | ✅ Full (per-process VRAM hidden by WDDM) | ✅ Full | — | ✅ |
+| AMD | Specs only | ✅ Utilization, VRAM, power, temperature (best effort) | — | ✅ (Linux host) |
+| Apple Silicon / Metal | — | — | ✅ Utilization and allocated GPU memory | ✅ (Mac SSH host) |
+| None | CPU / RAM / disk / net / specs | Same | Same | Same |
+
+Both tools detect Apple Silicon automatically using macOS `ioreg`, with no administrator privileges,
+compiled helper or extra dependencies. GPU allocation is shown as **shared memory**. Physical RAM is not
+reported as dedicated VRAM capacity, and VRAM percentages and capacity alerts remain unavailable.
+Temperature, power, clocks, NVIDIA GPM and per-process GPU usage are unavailable from this backend.
+Utilization, job-finished alerts, history, CSV export and CPU/RAM monitoring work normally. Counters are best
+effort and vary by driver/macOS version. Intel and AMD GPUs on macOS are not supported.
+
+To test a source checkout on a Mac:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ./pip
+.venv/bin/gpu-pulse status
+.venv/bin/gpu-pulse
+# VS Code extension (requires Node.js/npm)
+npm ci
+npm run smoke
+GPU_PULSE_EXPECT_VENDOR=apple npm run test:integration
+npm run package  # install the resulting .vsix through VS Code's Extensions menu
+```
 
 ---
 

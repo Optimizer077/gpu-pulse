@@ -17,6 +17,9 @@ interface GpuAcc {
   idle: number;
   busy: number;
   heldIdle: number;
+  vramN: number;
+  powerN: number;
+  tempN: number;
 }
 
 interface Acc {
@@ -90,12 +93,15 @@ function finalize(acc: Acc): MinuteBucket {
       n: g.n,
       util: r2(g.util / g.n),
       utilMax: g.utilMax,
-      vram: r2(g.vram / g.n),
-      power: r2(g.power / g.n),
+      vram: g.vramN ? r2(g.vram / g.vramN) : 0,
+      power: g.powerN ? r2(g.power / g.powerN) : 0,
       tempMax: g.tempMax,
       idle: g.idle,
       busy: g.busy,
       heldIdle: g.heldIdle,
+      ...(g.vramN !== g.n ? { vramN: g.vramN } : {}),
+      ...(g.powerN !== g.n ? { powerN: g.powerN } : {}),
+      ...(g.tempN !== g.n ? { tempN: g.tempN } : {}),
     };
   }
   return { t: acc.t, n: acc.n, cpu: acc.n ? r2(acc.cpu / acc.n) : 0, mem: acc.n ? r2(acc.mem / acc.n) : 0, gpus };
@@ -141,6 +147,14 @@ function mergeBuckets(a: MinuteBucket, b: MinuteBucket): MinuteBucket {
       busy: x.busy + g.busy,
       heldIdle: x.heldIdle + g.heldIdle,
     };
+    for (const [metric, key] of [['vram', 'vramN'], ['power', 'powerN'], ['tempMax', 'tempN']] as const) {
+      const xn = x[key] ?? x.n, gn = g[key] ?? g.n;
+      const count = xn + gn;
+      gpus[id][metric] = metric === 'tempMax'
+        ? Math.max(xn ? x[metric] : 0, gn ? g[metric] : 0)
+        : count ? r2((x[metric] * xn + g[metric] * gn) / count) : 0;
+      if (count !== gpus[id].n) gpus[id][key] = count;
+    }
   }
   const w = (p: number, q: number) => (n ? r2((p * a.n + q * b.n) / n) : 0);
   return { t: a.t, n, cpu: w(a.cpu, b.cpu), mem: w(a.mem, b.mem), gpus };
@@ -231,14 +245,18 @@ export class HistoryStore {
     a.mem += s.mem.totalBytes ? (s.mem.usedBytes / s.mem.totalBytes) * 100 : 0;
     for (const g of s.gpus) {
       if (g.util === null) continue;
-      const v = vramPct(g.memUsedMiB, g.memTotalMiB) ?? 0;
-      const ga = (a.gpus[g.uuid] ??= { n: 0, util: 0, utilMax: 0, vram: 0, power: 0, tempMax: 0, idle: 0, busy: 0, heldIdle: 0 });
+      const vp = vramPct(g.memUsedMiB, g.memTotalMiB);
+      const v = vp ?? 0;
+      const ga = (a.gpus[g.uuid] ??= { n: 0, util: 0, utilMax: 0, vram: 0, power: 0, tempMax: 0, idle: 0, busy: 0, heldIdle: 0, vramN: 0, powerN: 0, tempN: 0 });
       ga.n++;
       ga.util += g.util;
       ga.utilMax = Math.max(ga.utilMax, g.util);
       ga.vram += v;
+      if (vp !== null) ga.vramN++;
       ga.power += g.powerW ?? 0;
+      if (g.powerW !== null) ga.powerN++;
       ga.tempMax = Math.max(ga.tempMax, g.tempC ?? 0);
+      if (g.tempC !== null) ga.tempN++;
       if (g.util < IDLE_UTIL) ga.idle++;
       if (g.util >= BUSY_UTIL) ga.busy++;
       if (g.util < IDLE_UTIL && v >= HELD_VRAM) ga.heldIdle++;
@@ -290,6 +308,7 @@ export class HistoryStore {
     const to = minuteStart(now);
     const from = to - (minutes - 1) * MINUTE;
     let covered = 0, n = 0, util = 0, vram = 0, power = 0, idle = 0, busy = 0, held = 0;
+    let vramN = 0, powerN = 0;
     let peak: number | null = null, tempPeak: number | null = null;
     let cn = 0, cpu = 0, mem = 0;
     this.eachSince(from, (b) => {
@@ -304,13 +323,16 @@ export class HistoryStore {
       if (!g) return;
       n += g.n;
       util += g.util * g.n;
-      vram += g.vram * g.n;
-      power += g.power * g.n;
+      const vn = g.vramN ?? g.n, pn = g.powerN ?? g.n;
+      vram += g.vram * vn;
+      power += g.power * pn;
+      vramN += vn;
+      powerN += pn;
       idle += g.idle;
       busy += g.busy;
       held += g.heldIdle;
       peak = Math.max(peak ?? 0, g.utilMax);
-      tempPeak = Math.max(tempPeak ?? 0, g.tempMax);
+      if (g.tempN ?? g.n) tempPeak = Math.max(tempPeak ?? 0, g.tempMax);
     });
     return {
       label,
@@ -318,12 +340,12 @@ export class HistoryStore {
       coveredMinutes: covered,
       util: n ? util / n : null,
       utilPeak: peak,
-      vram: n ? vram / n : null,
-      power: n ? power / n : null,
+      vram: vramN ? vram / vramN : null,
+      power: powerN ? power / powerN : null,
       tempPeak,
       idleShare: n ? idle / n : null,
       busyShare: n ? busy / n : null,
-      heldIdleShare: n ? held / n : null,
+      heldIdleShare: vramN ? held / vramN : null,
       cpu: cn ? cpu / cn : null,
       mem: cn ? mem / cn : null,
     };
@@ -353,7 +375,9 @@ export class HistoryStore {
       const gpus = Object.entries(b.gpus);
       if (!gpus.length) rows.push([ts, '', b.n, '', '', '', '', '', b.cpu, b.mem].join(','));
       for (const [id, g] of gpus) {
-        rows.push([ts, id, g.n, g.util, g.utilMax, g.vram, g.power, g.tempMax, b.cpu, b.mem].join(','));
+        rows.push([ts, id, g.n, g.util, g.utilMax,
+          (g.vramN ?? g.n) ? g.vram : '', (g.powerN ?? g.n) ? g.power : '',
+          (g.tempN ?? g.n) ? g.tempMax : '', b.cpu, b.mem].join(','));
       }
     }
     return rows.join('\n') + '\n';

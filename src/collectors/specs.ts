@@ -50,13 +50,14 @@ export async function collectSpecs(
   let nvIndex = 0;
   const gpus = controllers.map((c) => {
     const isNv = /nvidia/i.test(`${c.vendor} ${c.model}`);
+    const isApple = process.platform === 'darwin' && /apple/i.test(`${c.vendor} ${c.model}`);
     const vbios = isNv ? nvidia.vbios[nvIndex++] : undefined;
     return {
       name: c.model,
-      vramMiB: c.memoryTotal || c.vram || null,
+      vramMiB: isApple ? null : c.memoryTotal || c.vram || null,
       driver: c.driverVersion || (isNv ? nvidia.driver : null),
       vbios: vbios || null,
-      extra: [c.vendor, c.bus].filter((x): x is string => !!x),
+      extra: [c.vendor, c.bus, isApple ? 'Metal · unified memory' : null].filter((x): x is string => !!x),
     };
   });
 

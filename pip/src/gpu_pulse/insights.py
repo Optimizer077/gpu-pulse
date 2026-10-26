@@ -32,7 +32,8 @@ def build_insights(hour: WindowStats, half: WindowStats, gpu: Optional[GpuSample
             Insight(
                 "info",
                 "No supported GPU detected",
-                "NVML is unavailable and no amdgpu device exposes utilization. CPU and memory are still tracked.",
+                "No NVIDIA, Linux amdgpu, or Apple Silicon / Metal backend is available. "
+                "CPU and memory are still tracked.",
             )
         )
     if hour.covered_minutes < 5:

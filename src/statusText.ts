@@ -34,6 +34,7 @@ const dash = (v: number | null | undefined, d = 0) => (v === null || v === undef
 const shortName = (n: string) => n.replace(/^NVIDIA (GeForce )?/, '');
 
 function vramGb(g: GpuSample): string {
+  if (g.vendor === 'apple') return `${dash(g.memUsedMiB === null ? null : g.memUsedMiB / 1024, 1)} GB shared`;
   return g.memUsedMiB !== null && g.memTotalMiB ? `${(g.memUsedMiB / 1024).toFixed(1)}/${(g.memTotalMiB / 1024).toFixed(0)} GB` : '–';
 }
 
@@ -53,7 +54,7 @@ export function statusView(s: Sample, tempWarn: number, alerts?: AlertSummary): 
 
   if (gs.length === 1) {
     const g = gs[0];
-    const vram = g.memUsedMiB !== null && g.memTotalMiB ? ` · ${(g.memUsedMiB / 1024).toFixed(1)}/${Math.round(g.memTotalMiB / 1024)} GB` : '';
+    const vram = g.vendor === 'apple' ? ` · ${vramGb(g)}` : g.memUsedMiB !== null && g.memTotalMiB ? ` · ${(g.memUsedMiB / 1024).toFixed(1)}/${Math.round(g.memTotalMiB / 1024)} GB` : '';
     const temp = g.tempC !== null ? ` · ${Math.round(g.tempC)}°C` : '';
     const tooltip =
       '**GPU Pulse**\n\n' +

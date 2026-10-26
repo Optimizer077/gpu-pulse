@@ -1,6 +1,6 @@
 # gpu-pulse
 
-A GPU dashboard that runs in your terminal. It shows live usage and how well the GPU has been used over the last 5 minutes, 30 minutes, hour and day. It works on Windows and Linux, including over plain SSH. This is the terminal companion to the **GPU Pulse** VS Code extension.
+A GPU dashboard that runs in your terminal. It shows live usage and how well the GPU has been used over the last 5 minutes, 30 minutes, hour and day. It works on Windows, Linux and macOS, including over plain SSH. This is the terminal companion to the **GPU Pulse** VS Code extension.
 
 ![Animated ring gauges](https://raw.githubusercontent.com/Optimizer077/gpu-pulse/main/docs/images/terminal-rings.gif)
 
@@ -62,11 +62,18 @@ The ring gauges are drawn in braille dots. They sweep to full on startup and the
 
 ## Supported hardware
 
-| GPU | Windows | Linux |
-|-----|---------|-------|
-| NVIDIA | NVML (ships with the driver) | NVML (ships with the driver) |
-| AMD | not yet | `amdgpu` via `/sys/class/drm` (best effort) |
-| none | CPU / RAM / specs only | CPU / RAM / specs only |
+| GPU | Windows | Linux | macOS |
+|-----|---------|-------|-------|
+| NVIDIA | NVML (ships with the driver) | NVML (ships with the driver) | — |
+| AMD | not yet | `amdgpu` via `/sys/class/drm` (best effort) | — |
+| Apple Silicon / Metal | — | — | Utilization and allocated GPU memory via `ioreg` |
+| none | CPU / RAM / specs only | CPU / RAM / specs only | CPU / RAM / specs only |
+
+Apple Silicon support requires no `sudo`, helper installation or extra Python dependency. IORegistry counters
+are best effort and can vary by macOS version. Allocated GPU memory is **shared system memory**, so there is
+no dedicated VRAM total or percentage. Unsupported metrics (GPU temperature, power, clocks, GPM and per-process
+GPU usage) remain unavailable. Memory-capacity alerts need a known total and do not fire for this backend;
+utilization history and job-finished alerts work normally. Intel and AMD GPUs on macOS are not supported.
 
 On Windows, per-process VRAM shows as *n/a*. The Windows display driver model (WDDM) does not report it.
 

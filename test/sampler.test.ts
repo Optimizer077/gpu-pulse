@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { AppleMetalCollector } from '../src/collectors/appleMetal';
 import type { StreamChild } from '../src/collectors/nvidiaStream';
 import { MAX_STREAM_RESTARTS, RATE_DEBOUNCE_MS, Sampler, STREAM_RETRY_MS } from '../src/sampler';
 import type { Sample } from '../src/types';
 import { csvRow, FakeChild, gpu } from './helpers';
 
-afterEach(() => vi.useRealTimers());
+beforeEach(() => vi.spyOn(AppleMetalCollector.prototype, 'detect').mockResolvedValue(false));
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 /** A Sampler in stream mode with a fake nvidia-smi; `children` collects every spawned process. */
 async function streamingSampler(gpuCount = 2, interval = 500) {
@@ -163,6 +165,32 @@ describe('Sampler (nvidia-smi stream)', () => {
 });
 
 describe('Sampler', () => {
+  it('polls Apple Metal, drops failed reads and recovers without stale GPU values', async () => {
+    vi.useFakeTimers();
+    const s = new Sampler('', 1000);
+    vi.spyOn(s.nvidia, 'detect').mockResolvedValue(false);
+    vi.spyOn(s.apple, 'detect').mockResolvedValue(true);
+    const apple = { ...gpu(0, 42), vendor: 'apple' as const, uuid: 'apple-0', memTotalMiB: null };
+    const read = vi.spyOn(s.apple, 'sample').mockResolvedValue([apple]);
+    try {
+      await s.start();
+      expect(s.vendor).toBe('apple');
+      expect(s.mode).toBe('poll');
+      expect(s.latest?.gpus).toEqual([apple]);
+      read.mockRejectedValueOnce(new Error('ioreg timed out'));
+      await s.now();
+      expect(s.latest?.gpus).toEqual([]);
+      await s.now();
+      expect(s.latest?.gpus).toEqual([apple]);
+      s.pause();
+      const count = read.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(read).toHaveBeenCalledTimes(count);
+      await s.now();
+      expect(read).toHaveBeenCalledTimes(count + 1);
+    } finally { s.stop(); }
+  });
+
   it('never runs more than one polling loop, however often now() is called', async () => {
     vi.useFakeTimers();
     const s = new Sampler('/nonexistent/nvidia-smi', 1000);

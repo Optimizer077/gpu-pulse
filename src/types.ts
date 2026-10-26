@@ -3,7 +3,7 @@ export interface GpuSample {
   index: number;
   uuid: string;
   name: string;
-  vendor: 'nvidia' | 'amd';
+  vendor: 'nvidia' | 'amd' | 'apple';
   util: number | null; // %
   memUtil: number | null; // % memory-controller busy
   memUsedMiB: number | null;
@@ -63,6 +63,10 @@ export interface GpuMinute {
   idle: number; // samples with util < 10%
   busy: number; // samples with util >= 70%
   heldIdle: number; // samples with VRAM >= 30% while util < 10%
+  /** Optional observation counts; omitted in legacy files and when all readings are available. */
+  vramN?: number;
+  powerN?: number;
+  tempN?: number;
 }
 
 export interface WindowStats {

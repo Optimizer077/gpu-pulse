@@ -46,9 +46,11 @@ def gpu_block(g: GpuSample, hour: Optional[WindowStats], bw: int) -> Group:
     grid.add_row(
         _metric("Util", (g.util or 0) / 100, f"{R.fmt(g.util)}%", R.GPU, R.GPU_GLOW, bw),
         _metric(
-            "VRAM",
+            "GPU mem" if g.vendor == "apple" else "VRAM",
             (vram or 0) / 100,
-            f"{R.fmt(vram)}% {(g.mem_used_mib or 0) / 1024:.1f}/{(g.mem_total_mib or 0) / 1024:.0f}G",
+            (f"{R.fmt(g.mem_used_mib / 1024 if g.mem_used_mib is not None else None, 1)} GB shared"
+             if g.vendor == "apple" else
+             f"{R.fmt(vram)}% {(g.mem_used_mib or 0) / 1024:.1f}/{(g.mem_total_mib or 0) / 1024:.0f}G"),
             R.VRAM,
             R.VRAM_GLOW,
             bw,
@@ -128,7 +130,9 @@ def run_status(mon: Monitor, console: Optional[Console] = None) -> None:
     if len(s.gpus) > 1:
         parts += [aggregate_line(s.gpus), Text()]
     if not s.gpus:
-        parts.append(Text("No supported GPU detected (NVIDIA via NVML, or AMD amdgpu on Linux).", Style(color=R.MUTED)))
+        parts.append(Text(
+            "No supported GPU detected (NVIDIA, Linux AMD, or Apple Silicon / Metal).", Style(color=R.MUTED),
+        ))
     cpu_ram = Table.grid(padding=(0, 2))
     cpu_ram.add_column(no_wrap=True)
     cpu_ram.add_column(no_wrap=True)

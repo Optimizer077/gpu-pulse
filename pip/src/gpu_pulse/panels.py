@@ -365,6 +365,8 @@ def arch_card(d: Any, g: Optional[GpuSample], width: int) -> Group:
     name = getattr(d, "name", None) or (g.name if g else None)
     if name:
         rows.append(Text(name, Style(color=R.INK, bold=True)))
+        if g and g.vendor == "apple":
+            rows.append(Text("Metal · unified memory (shared with CPU)", Style(color=R.MUTED)))
         part = getattr(d, "board_part", None)
         if part:
             rows.append(Text(f"board {part}", Style(color=R.MUTED)))
