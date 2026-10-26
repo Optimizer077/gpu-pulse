@@ -89,8 +89,8 @@ utilization and shared GPU allocations through macOS `ioreg`, with no `sudo` or 
 
 <table>
 <tr>
-<td width="50%"><img src="docs/images/terminal-metal.png" alt="Terminal dashboard on an Apple M2 Pro during a real Metal workload, showing GPU utilization and shared memory"><br><sub><b>Terminal</b>: real M2 Pro readings during a Metal compute workload.</sub></td>
-<td width="50%"><img src="docs/images/vscode-metal.png" alt="VS Code dashboard renderer using real Apple M2 Pro readings, with GPU memory labeled as shared and unsupported sensors shown as unavailable"><br><sub><b>VS Code dashboard</b>: real M2 Pro readings in the browser preview, with shared GPU memory and unavailable sensor values.</sub></td>
+<td width="50%"><img src="docs/images/terminal-metal.png" alt="Mac terminal layout with GPU activity, shared GPU allocation, CPU and RAM during a real Metal workload"><br><sub><b>Terminal</b>: the Mac layout shows GPU activity, allocated shared memory, CPU and RAM.</sub></td>
+<td width="50%"><img src="docs/images/vscode-metal.png" alt="Mac VS Code dashboard renderer using real Apple M2 Pro readings, with GPU activity and a shared-memory allocation card"><br><sub><b>VS Code dashboard</b>: real M2 Pro readings in the browser preview, with a focused GPU activity and shared-memory view.</sub></td>
 </tr>
 </table>
 
@@ -404,6 +404,9 @@ flowchart LR
 Both tools detect Apple Silicon automatically using macOS `ioreg`, with no administrator privileges,
 compiled helper or extra dependencies. GPU allocation is shown as **shared memory**. Physical RAM is not
 reported as dedicated VRAM capacity, and VRAM percentages and capacity alerts remain unavailable.
+The Mac layout hides GPU temperature, power, clock, process and NVIDIA GPM panels. The terminal Overview
+uses four cards: GPU activity, an absolute GPU allocation in GB, CPU and RAM (including swap). The GPU tab
+shows Metal facts and activity/shared-memory traces; history and alerts omit unsupported sensor fields.
 Temperature, power, clocks, NVIDIA GPM and per-process GPU usage are unavailable from this backend.
 Utilization, job-finished alerts, history, CSV export and CPU/RAM monitoring work normally. Counters are best
 effort and vary by driver/macOS version. Intel and AMD GPUs on macOS are not supported.

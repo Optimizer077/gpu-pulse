@@ -281,13 +281,21 @@ def _diagnose(
     else:
         health_rows = [("GPU", "info", "n/a", "No live reading yet")]
     health_rows += system_health(sf, input_conf)
+    actions = best.actions
+    if live is not None and live.vendor == "apple" and best.bottleneck == "input":
+        actions = (
+            "Benchmark data-loading workers and batch size for this Mac",
+            "Reuse prepared inputs and avoid unnecessary CPU/GPU synchronization",
+            "Watch shared RAM and swap as you increase the workload",
+            "Profile the Metal workload to confirm gaps between GPU submissions",
+        )
     return Diagnosis(
         score=hourly.score,
         verdict=best.verdict,
         bottleneck=cast(Bottleneck, best.bottleneck),
         confidence=round(best.confidence, 2),
         evidence=tuple(evidence),
-        actions=best.actions,
+        actions=actions,
         throttle=live.throttle if live else (),
         session=hourly.session,
         vram_forecast=forecast,

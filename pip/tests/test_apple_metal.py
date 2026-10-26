@@ -121,25 +121,90 @@ def test_monitor_records_recovers_and_renders_status(monkeypatch: pytest.MonkeyP
         run_status(m, console)
         out = console.export_text()
         assert "Apple M2 Pro" in out and "2.0 GB shared" in out and "/0G" not in out
+        assert "Temp" not in out and "Power" not in out and "Held idle" not in out
         assert not m.processes
     finally:
         m.close()
 
 
-def test_dashboard_all_tabs_with_apple_gpu(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("size", [(60, 20), (80, 24), (90, 30), (130, 40), (200, 60)])
+def test_dashboard_all_tabs_with_apple_gpu(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, size: tuple[int, int],
+) -> None:
+    def text(widget):  # noqa: ANN001
+        return "\n".join("".join(seg.text for seg in line)
+                         for line in widget.render_lines(widget.region.reset_offset))
+
     async def run() -> None:
         m = monitor(monkeypatch, tmp_path)
         app = GpuDashboard(m, fps=0)
         try:
-            async with app.run_test(size=(130, 40)) as pilot:
+            async with app.run_test(size=size) as pilot:
                 await pilot.pause(0.3)
                 assert "Apple M2 Pro" in str(app.query_one("#ring-gpu", RingGauge).border_title)
                 assert str(app.query_one("#ring-vram", RingGauge).border_title) == "GPU MEMORY"
+                assert app.layout_plan.ring_cols * app.layout_plan.ring_rows == 4
+                visible = [g for g in app.query(RingGauge) if g.display]
+                assert len(visible) == 4 and all(g.region.height == app.layout_plan.ring_h for g in visible)
+                memory = app.query_one("#ring-vram", RingGauge)
+                assert memory.numeric_only and memory._num() == "2.0" and memory.unit == "GB"
+                assert memory._frac() == 0  # no invented VRAM limit or fraction of physical RAM
+                assert "GB" in text(memory) and "%" not in text(memory)
+                for pid in ("ring-temp", "ring-power", "truth", "truth-r", "live-o", "truth-g", "truth-d", "procs"):
+                    assert not app.query_one(f"#{pid}").display, (size, pid)
                 for key, tab in (("2", "gpu"), ("3", "system"), ("4", "history"), ("5", "diagnosis")):
                     await pilot.press(key)
                     await pilot.pause(0.1)
                     assert app.tab == tab
+                    if tab == "gpu":
+                        assert not app.query_one("#gpu-side").display and not app.query_one("#procs").display
+                        arch = text(app.query_one("#arch"))
+                        assert "Metal" in arch and "GPU allocation" in arch and "Reading architecture" not in arch
+                    if tab == "history":
+                        assert "VRAM" not in text(app.query_one("#win0"))
+                        assert "Avg power" not in text(app.query_one("#win0"))
+                    if tab == "diagnosis":
+                        assert "Throttling" not in text(app.query_one("#diag-full"))
+                        assert "VRAM" not in text(app.query_one("#alerts"))
+                await pilot.press("1")
+                await pilot.resize_terminal(120, 36)
+                await pilot.pause(0.2)
+                assert app.layout_plan.ring_cols * app.layout_plan.ring_rows == 4
+                assert not app.query_one("#ring-temp").display and not app.query_one("#truth").display
         finally:
             m.close()
 
     asyncio.run(run())
+
+
+def test_apple_layout_does_not_change_nvidia_demo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from gpu_pulse import anim
+    from gpu_pulse.layout import plan
+
+    assert "." in anim.big_text("2.0")[-1]  # absolute shared-memory readings retain decimal precision
+
+    for width, height in ((60, 20), (80, 24), (130, 40), (200, 60)):
+        layout = plan(width, height, ring_count=4)
+        assert layout.ring_cols * layout.ring_rows == 4
+        assert layout.ring_rows * layout.ring_h <= height - 2
+    m = monitor(monkeypatch, tmp_path)
+    try:
+        assert GpuDashboard(m).apple_layout
+        m.cfg = replace(m.cfg, demo=True)
+        assert not GpuDashboard(m).apple_layout
+    finally:
+        m.close()
+
+
+def test_metal_diagnosis_uses_mac_recommendations() -> None:
+    from gpu_pulse.intel import diagnose
+
+    h = HistoryStore()
+    start = int(time.time() // 60) * 60 - 200
+    for k in range(400):
+        s = sample(start + k * 0.5)
+        h.add(replace(s, gpus=(replace(s.gpus[0], util=5 if k % 10 < 3 else 92),), swap_pct=15))
+    diagnosis = diagnose(h, "apple-0", now=start + 199.5)
+    assert diagnosis.bottleneck == "input"
+    assert any("shared RAM and swap" in action for action in diagnosis.actions)
+    assert not any("pin_memory" in action or "cuda" in action.lower() for action in diagnosis.actions)

@@ -54,7 +54,8 @@ def rings(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> 
             side.append(("SM", _pct(g.sm_active)))
         if g.tensor_active is not None:
             side.append(("tensor", _pct(g.tensor_active)))
-        side += [("clock", f"{R.fmt(g.clock_mhz)} MHz"), ("state", g.pstate or "–")]
+        if g.vendor != "apple":
+            side += [("clock", f"{R.fmt(g.clock_mhz)} MHz"), ("state", g.pstate or "–")]
         gpu.set_target(
             g.util,
             caption,
@@ -66,15 +67,16 @@ def rings(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> 
         used, total = (g.mem_used_mib or 0) / 1024, (g.mem_total_mib or 0) / 1024
         shared = g.vendor == "apple"
         set_border(q("#ring-vram", RingGauge), title="GPU MEMORY" if shared else "VRAM")
-        q("#ring-vram", RingGauge).set_target(
-            g.vram_pct,
-            f"{R.fmt(g.mem_used_mib / 1024 if g.mem_used_mib is not None else None, 1)} GB shared"
-            if shared else f"{used:.1f} / {total:.0f} GB",
-            f"1h avg {hour.vram:.0f}%" if hour.vram is not None else "",
-            side=(("used", f"{used:.1f} GB"), ("total", "shared RAM" if shared else f"{total:.1f} GB"),
-                  ("1h avg", _pct(hour.vram)),
-                  ("bus", _pct(g.mem_util))),
-        )  # fmt: skip
+        memory = q("#ring-vram", RingGauge)
+        memory.numeric_only = shared
+        memory.unit, memory.precision = ("GB", 1) if shared else ("%", 0)
+        memory.set_target(
+            g.mem_used_mib / 1024 if shared and g.mem_used_mib is not None else g.vram_pct,
+            "GPU allocation" if shared else f"{used:.1f} / {total:.0f} GB",
+            "shared with CPU" if shared else f"1h avg {hour.vram:.0f}%" if hour.vram is not None else "",
+            side=() if shared else (("used", f"{used:.1f} GB"), ("total", f"{total:.1f} GB"),
+                                   ("1h avg", _pct(hour.vram)), ("bus", _pct(g.mem_util))),
+        )
         warn = app.mon.cfg.temp_warn
         temp = q("#ring-temp", RingGauge)
         temp.set_target(
@@ -114,8 +116,10 @@ def rings(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> 
     gb_used, gb_total = s.mem_used / 2**30, s.mem_total / 2**30
     q("#ring-ram", RingGauge).set_target(
         s.mem_pct,
-        f"{gb_used:.1f} / {gb_total:.0f} GB",
-        f"swap {s.swap_pct:.0f}%" if s.swap_pct is not None else "",
+        f"swap {s.swap_pct:.0f}%" if app.apple_layout and s.swap_pct is not None
+        else f"{gb_used:.1f} / {gb_total:.0f} GB",
+        f"{gb_used:.1f} / {gb_total:.0f} GB" if app.apple_layout
+        else f"swap {s.swap_pct:.0f}%" if s.swap_pct is not None else "",
         side=(("used", f"{gb_used:.1f} GB"), ("total", f"{gb_total:.1f} GB"), ("swap", _pct(s.swap_pct))),
     )
 
@@ -128,6 +132,7 @@ def _series(app: GpuDashboard, s: Sample, g: Optional[GpuSample], rng: int) -> d
     out: dict[str, list[Optional[float]]] = {
         "util": [p.util if p else None for p in picked],
         "vram": [p.vram_pct if p else None for p in picked],
+        "allocation": [p.mem_used_mib / 1024 if p and p.mem_used_mib is not None else None for p in picked],
         "sm": [p.sm_active if p else None for p in picked],
         "tensor": [p.tensor_active if p else None for p in picked],
         "dram": [p.dram_bw_util if p else None for p in picked],
@@ -177,10 +182,11 @@ def live(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
             tl = _panel(app, "timeline")
             set_border(tl, title=f"GPU TIMELINE · last {rng // 60}m (r)")
             tl.update(P.timeline(_series(app, s, g, rng), g, tl.inner_width, tl.inner_height))
-        truth = _panel(app, "truth" if L.columns == 3 else "truth-r")
-        cols = _truth_cols(1 if L.columns == 3 else 2, truth.inner_width)
-        truth.styles.height = _truth_rows(g, cols) + 2
-        truth.update(P.true_usage(g, truth.inner_width, _truth_rows(g, cols), cols))
+        if not app.apple_layout:
+            truth = _panel(app, "truth" if L.columns == 3 else "truth-r")
+            cols = _truth_cols(1 if L.columns == 3 else 2, truth.inner_width)
+            truth.styles.height = _truth_rows(g, cols) + 2
+            truth.update(P.true_usage(g, truth.inner_width, _truth_rows(g, cols), cols))
         lo = _panel(app, "live-o")
         if L.columns == 3 and lo.display:
             lo.update(P.gpu_live(g, lo.inner_width))
@@ -190,17 +196,27 @@ def live(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
         arch = app.query_one("#ov-arch", Static)
         if arch.display:
             line = Text("▍", Style(color=R.GPU))
-            line.append_text(P.arch_summary(app.detail_for(g), g))
+            if app.apple_layout:
+                line.append("Metal · unified memory", Style(color=R.GPU_GLOW))
+                if s.swap_pct is not None:
+                    line.append(f" · swap {s.swap_pct:.0f}%", Style(color=R.INK))
+                line.append(" · GPU allocations share RAM with the CPU", Style(color=R.MUTED))
+            else:
+                line.append_text(P.arch_summary(app.detail_for(g), g))
             arch.update(line)
     elif app.tab == "gpu":
-        live_p = _panel(app, "gpu-live")
-        live_p.update(P.gpu_live(g, live_p.inner_width))
-        tg = _panel(app, "truth-g")
-        tg.update(P.true_usage(g, tg.inner_width, _truth_rows(g, 1), 1))
+        if not app.apple_layout:
+            live_p = _panel(app, "gpu-live")
+            live_p.update(P.gpu_live(g, live_p.inner_width))
+            tg = _panel(app, "truth-g")
+            tg.update(P.true_usage(g, tg.inner_width, _truth_rows(g, 1), 1))
         tr = _panel(app, "gpu-trace")
         rng = RANGES[app.range_i]
-        set_border(tr, title=f"TRACES · last {rng // 60}m (r) · 0–100% scale")
-        tr.update(P.gpu_traces(_series(app, s, g, rng), tr.inner_width, tr.inner_height))
+        set_border(tr, title=f"GPU ACTIVITY · last {rng // 60}m (r)" if app.apple_layout
+                   else f"TRACES · last {rng // 60}m (r) · 0–100% scale")
+        series = _series(app, s, g, rng)
+        tr.update(P.timeline(series, g, tr.inner_width, tr.inner_height) if app.apple_layout
+                  else P.gpu_traces(series, tr.inner_width, tr.inner_height))
     elif app.tab == "system":
         recent = app.mon.history.recent_last(int(300 / app.mon.cfg.interval_s))
         cpu = _panel(app, "cpu")
@@ -235,9 +251,9 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
         problems = [r for r in rows if r.level in ("warning", "serious", "critical")]
         note = f"▲ {len(problems)} need attention" if problems else "✔ all clear"
         hr = _panel(app, "health-r")
-        truth_h = _truth_rows(g, _truth_cols(2, _panel(app, "truth-r").inner_width)) + 2
+        truth_h = 0 if app.apple_layout else _truth_rows(g, _truth_cols(2, _panel(app, "truth-r").inner_width)) + 2
         mid_h = L.middle_h - (1 if app.query_one("#ov-arch").display else 0)
-        center_left = mid_h - (_truth_rows(g, 1) + 2) - (len(rows) + 2)
+        center_left = mid_h - (0 if app.apple_layout else _truth_rows(g, 1) + 2) - (len(rows) + 2)
         packed = center_left < 0  # not enough height: two entries per line instead of clipping rows
         health_h = (math.ceil(len(rows) / 2) if packed else len(rows)) + 2
         for pid in ("health", "health-r"):
@@ -245,10 +261,10 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
             set_border(hp, subtitle=note)
             two = packed if pid == "health" else False
             hp.update(C.health_grid(rows, hp.inner_width, detail=hp.inner_width >= 30, columns=2 if two else 1))
-        _panel(app, "health").styles.height = health_h
+        _panel(app, "health").styles.height = "1fr" if app.apple_layout else health_h
         hr.styles.height = len(rows) + 2
         hr.display = L.columns < 3 and mid_h - truth_h - (len(rows) + 2) >= 10
-        _panel(app, "live-o").display = L.columns == 3 and center_left >= 8
+        _panel(app, "live-o").display = L.columns == 3 and center_left >= 8 and not app.apple_layout
         if L.show_bottom:
             usage = _panel(app, "usage")
             usage.update(
@@ -258,7 +274,7 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
             )
     elif tab == "gpu":
         arch = _panel(app, "arch")
-        set_border(arch, title=f"GPU ARCHITECTURE{_tag(app, s, g)}")
+        set_border(arch, title="APPLE GPU · METAL" if app.apple_layout else f"GPU ARCHITECTURE{_tag(app, s, g)}")
         arch.update(P.arch_card(app.detail_for(g), g, arch.inner_width))
         procs = _panel(app, "procs")
         mine = [p for p in app.mon.processes if not g or p.gpu_uuid == g.uuid]
@@ -274,7 +290,8 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
     elif tab == "history":
         for i, w in enumerate(a.windows):
             wp = _panel(app, f"win{i}")
-            wp.update(P.window_card(w, cells[-w.minutes :], wp.inner_width, wp.inner_height))
+            wp.update(P.window_card(w, cells[-w.minutes :], wp.inner_width, wp.inner_height,
+                                   shared_memory=app.apple_layout))
         heat = _panel(app, "heat")
         set_border(heat, title=f"24-HOUR ACTIVITY{_tag(app, s, g)} · one cell per minute")
         col_w = 2 if heat.inner_width >= 126 else 1
@@ -290,7 +307,7 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
         runs = C.find_sessions(start, cells)
         sp = _panel(app, "sessions")
         set_border(sp, title=f"SESSIONS · last 24 h · {len(runs)}")
-        head = C.session_line(getattr(d, "session", None))
+        head = C.session_line(getattr(d, "session", None), shared_memory=app.apple_layout)
         body = C.sessions_table(runs, sp.inner_width, 12)
         sp.update(Group(head, Text(), body) if head is not None else body)
     elif tab == "diagnosis":
@@ -301,5 +318,6 @@ def slow(app: GpuDashboard, s: Sample, g: Optional[GpuSample], a: Analysis) -> N
         hf.update(C.health_grid(C.health_rows(d, s, g, app.mon.cfg.temp_warn, grade), hf.inner_width))
         _panel(app, "insights").update(C.insights_list(C.merged_insights(a, d, extra)))
         app.draw_alerts(force=True)
-        td = _panel(app, "truth-d")
-        td.update(P.true_usage(g, td.inner_width, _truth_rows(g, 1), 1))
+        if not app.apple_layout:
+            td = _panel(app, "truth-d")
+            td.update(P.true_usage(g, td.inner_width, _truth_rows(g, 1), 1))

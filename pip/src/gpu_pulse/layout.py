@@ -48,12 +48,13 @@ def ring_content_h(width: int, height: int, cols: int, rows: int, fleet_h: int =
     return min(by_width, by_height, RING_MAX)
 
 
-def plan(width: int, height: int, fleet_h: int = 0) -> Layout:
+def plan(width: int, height: int, fleet_h: int = 0, ring_count: int = RING_COUNT) -> Layout:
     """Panel sizes for a terminal; ``fleet_h`` is the outer height of the ALL GPUS panel (0 = one GPU)."""
     body = max(1, height - 2 - fleet_h)
     compact = width < 80 or height < 24
-    best = (-1, 6, 1)
-    for cols, rows in ((6, 1), (3, 2), (2, 3)):
+    grids = ((4, 1), (2, 2)) if ring_count == 4 else ((6, 1), (3, 2), (2, 3))
+    best = (-1, ring_count, 1)
+    for cols, rows in grids:
         h = ring_content_h(width, height, cols, rows, fleet_h)
         if h > best[0]:
             best = (h, cols, rows)
@@ -61,8 +62,10 @@ def plan(width: int, height: int, fleet_h: int = 0) -> Layout:
     meters = h < RING_MIN
     if meters:
         # One-line meters need ~18 columns each; 1 or 2 content rows depending on height.
-        cols = 6 if width >= 6 * 22 else 3 if width >= 3 * 20 else 2
-        rows = RING_COUNT // cols
+        cols = (4 if width >= 4 * 22 else 2) if ring_count == 4 else (
+            6 if width >= 6 * 22 else 3 if width >= 3 * 20 else 2
+        )
+        rows = ring_count // cols
         h = 2 if body - rows * 4 >= 12 else 1
     ring_h = h + CHROME
     rest = body - rows * ring_h

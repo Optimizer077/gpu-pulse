@@ -49,7 +49,9 @@ class AlertCenter:
         return len(self.engine.active())
 
 
-def rules_summary(cfg: AlertConfig) -> str:
+def rules_summary(cfg: AlertConfig, shared_memory: bool = False) -> str:
+    if shared_memory:
+        return f"Watching: job finished after ≥ {cfg.job_min:g} min of GPU activity."
     return (
         f"Watching: ≥ {cfg.temp_warn:g} °C for {cfg.hot_s:g} s · VRAM ≥ {cfg.vram_full_pct:g}% for "
         f"{cfg.vram_full_s:g} s · idle while holding VRAM {cfg.idle_held_min:g} min · "
@@ -57,7 +59,7 @@ def rules_summary(cfg: AlertConfig) -> str:
     )
 
 
-def alerts_list(center: Optional[AlertCenter], width: int) -> RenderableType:
+def alerts_list(center: Optional[AlertCenter], width: int, shared_memory: bool = False) -> RenderableType:
     """The ALERTS panel body: newest first, one line plus a dim detail line per alert."""
     if center is None:
         return Text("Alerts are off (--no-alerts).", Style(color=R.MUTED))
@@ -73,7 +75,7 @@ def alerts_list(center: Optional[AlertCenter], width: int) -> RenderableType:
             rows.append(Text(f"           {a.detail}", Style(color=R.MUTED), overflow="fold"))
     if not rows:
         rows.append(Text("✔ No alerts yet.", Style(color=R.LEVEL_COLOR["good"])))
-    rows.append(Text(rules_summary(center.engine.cfg), Style(color=R.DIM), overflow="fold"))
+    rows.append(Text(rules_summary(center.engine.cfg, shared_memory), Style(color=R.DIM), overflow="fold"))
     if center.muted():
         rows.append(Text("Muted: no toasts or bell for up to an hour (m to unmute).", Style(color=R.MUTED)))
     return Group(*rows)

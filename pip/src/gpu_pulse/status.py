@@ -45,22 +45,22 @@ def gpu_block(g: GpuSample, hour: Optional[WindowStats], bw: int) -> Group:
     grid.add_column(no_wrap=True)
     grid.add_row(
         _metric("Util", (g.util or 0) / 100, f"{R.fmt(g.util)}%", R.GPU, R.GPU_GLOW, bw),
-        _metric(
-            "GPU mem" if g.vendor == "apple" else "VRAM",
+        Text(f"GPU memory  {R.fmt(g.mem_used_mib / 1024 if g.mem_used_mib is not None else None, 1)} GB shared",
+             Style(color=R.VRAM_GLOW, bold=True)) if g.vendor == "apple" else _metric(
+            "VRAM",
             (vram or 0) / 100,
-            (f"{R.fmt(g.mem_used_mib / 1024 if g.mem_used_mib is not None else None, 1)} GB shared"
-             if g.vendor == "apple" else
-             f"{R.fmt(vram)}% {(g.mem_used_mib or 0) / 1024:.1f}/{(g.mem_total_mib or 0) / 1024:.0f}G"),
+            f"{R.fmt(vram)}% {(g.mem_used_mib or 0) / 1024:.1f}/{(g.mem_total_mib or 0) / 1024:.0f}G",
             R.VRAM,
             R.VRAM_GLOW,
             bw,
         ),
     )
     power_frac = (g.power_w or 0) / g.power_limit_w if g.power_limit_w else 0
-    grid.add_row(
-        _metric("Temp", (g.temp_c or 0) / 100, f"{R.fmt(g.temp_c)}°C", R.RAM, R.RAM_GLOW, bw),
-        _metric("Power", power_frac, f"{R.fmt(g.power_w)}/{R.fmt(g.power_limit_w)}W", R.CPU, R.CPU_GLOW, bw),
-    )
+    if g.vendor != "apple":
+        grid.add_row(
+            _metric("Temp", (g.temp_c or 0) / 100, f"{R.fmt(g.temp_c)}°C", R.RAM, R.RAM_GLOW, bw),
+            _metric("Power", power_frac, f"{R.fmt(g.power_w)}/{R.fmt(g.power_limit_w)}W", R.CPU, R.CPU_GLOW, bw),
+        )
     return Group(head, grid)
 
 
@@ -81,9 +81,10 @@ def aggregate_line(gpus: Sequence[GpuSample]) -> Text:
     return t
 
 
-def windows_table(windows: tuple[WindowStats, ...]) -> Table:
+def windows_table(windows: tuple[WindowStats, ...], shared_memory: bool = False) -> Table:
     t = Table(box=box.SIMPLE_HEAD, header_style=Style(color=R.MUTED), pad_edge=False)
-    for col in ("Window", "GPU avg", "Peak", "Idle", "Busy", "Held idle", "CPU/RAM", "Recorded"):
+    for col in ("Window", "GPU avg", "Peak", "Idle", "Busy", *([] if shared_memory else ["Held idle"]),
+                "CPU/RAM", "Recorded"):
         t.add_column(col, justify="left" if col == "Window" else "right", no_wrap=True)
 
     def pct(x: Optional[float]) -> str:
@@ -96,7 +97,7 @@ def windows_table(windows: tuple[WindowStats, ...]) -> Table:
             R.fmt(w.util_peak, 0, "%"),
             pct(w.idle_share),
             pct(w.busy_share),
-            pct(w.held_idle_share),
+            *([] if shared_memory else [pct(w.held_idle_share)]),
             f"{R.fmt(w.cpu)}/{R.fmt(w.mem)}%",
             f"{w.covered_minutes}/{w.minutes}m",
         )
@@ -154,7 +155,7 @@ def run_status(mon: Monitor, console: Optional[Console] = None) -> None:
         parts.append(verdict)
     if len(s.gpus) > 1:
         parts.append(Text(f"Usage windows and insights below: GPU {s.gpus[0].index}", Style(color=R.MUTED)))
-    parts.append(windows_table(a.windows))
+    parts.append(windows_table(a.windows, shared_memory=mon.vendor == "apple" and not mon.cfg.demo))
     _, cells = mon.history.heatmap(first, hours=1)
     spark = Text("Last 60 min  ", Style(color=R.MUTED))
     spark.append_text(R.sparkline(cells, min(60, console.width - 20), R.GPU_GLOW))

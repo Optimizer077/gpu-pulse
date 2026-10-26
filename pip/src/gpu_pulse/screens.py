@@ -48,7 +48,7 @@ METRICS = (
 )  # fmt: skip
 
 
-def help_text() -> Group:
+def help_text(shared_memory: bool = False) -> Group:
     keys = Table.grid(padding=(0, 2))
     keys.add_column(style=Style(color=R.GPU_GLOW, bold=True), no_wrap=True)
     keys.add_column(style=Style(color=R.INK))
@@ -58,7 +58,15 @@ def help_text() -> Group:
     metrics.add_column(style=Style(color=R.INK, bold=True), no_wrap=True)
     metrics.add_column(style=Style(color=R.MUTED))
     for k, v in METRICS:
+        if shared_memory and k in ("SM active", "SM occupancy", "Tensor cores", "DRAM bandwidth",
+                                   "FP32/FP16/FP64/INT", "VRAM", "Throttle", "Rings", "All GPUs", "Alerts"):
+            continue
         metrics.add_row(k, v)
+    if shared_memory:
+        metrics.add_row("GPU memory", "GPU allocations in GB, shared with the CPU. "
+                        "There is no dedicated VRAM capacity.")
+        metrics.add_row("Swap", "System swap usage, shown with RAM; rising swap can affect GPU workloads.")
+        metrics.add_row("Alerts", "Notifies when a sustained GPU workload finishes; m mutes notifications.")
     return Group(
         Text("KEYS", Style(color=R.MUTED, bold=True)),
         keys,
@@ -69,6 +77,10 @@ def help_text() -> Group:
 
 
 class HelpScreen(ModalScreen[None]):
+    def __init__(self, shared_memory: bool = False) -> None:
+        super().__init__()
+        self.shared_memory = shared_memory
+
     DEFAULT_CSS = """
     HelpScreen { align: center middle; background: #080a0e 70%; }
     #help-box { width: 96; max-width: 96%; height: auto; max-height: 90%; border: round #1e9ccc;
@@ -77,7 +89,7 @@ class HelpScreen(ModalScreen[None]):
     BINDINGS = [("escape", "close", "Close"), ("question_mark", "close", "Close"), ("q", "close", "Close")]
 
     def compose(self) -> ComposeResult:
-        box = VerticalScroll(Static(help_text()), id="help-box")
+        box = VerticalScroll(Static(help_text(self.shared_memory)), id="help-box")
         box.border_title = "GPU PULSE · HELP"
         box.border_subtitle = "Esc to close"
         yield box

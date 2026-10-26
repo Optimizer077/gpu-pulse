@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import platform
 import socket
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
@@ -162,6 +163,13 @@ class SystemCollector:
 
 
 def _cpu_model() -> str:
+    if sys.platform == "darwin":
+        try:
+            return subprocess.check_output(
+                ["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"], text=True, timeout=4,
+            ).strip() or platform.processor()
+        except (OSError, subprocess.SubprocessError):
+            pass
     if platform.system() == "Linux":
         try:
             with open("/proc/cpuinfo", encoding="utf-8") as f:
@@ -182,6 +190,8 @@ def _cpu_model() -> str:
 
 
 def _os_name() -> str:
+    if platform.system() == "Darwin":
+        return f"macOS {platform.mac_ver()[0] or platform.release()}"
     if platform.system() == "Linux":
         try:
             info = platform.freedesktop_os_release()

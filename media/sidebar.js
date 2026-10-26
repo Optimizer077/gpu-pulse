@@ -84,6 +84,8 @@
       txt(r.f.util, fmt(g.util));
       width(r.f.vbar, g.memTotalMiB ? (g.memUsedMiB / g.memTotalMiB) * 100 : 0);
       txt(r.f.vram, g.vendor === 'apple' ? `${gib(g.memUsedMiB)} GB shared` : `${gib(g.memUsedMiB)}/${gib(g.memTotalMiB)} GB`);
+      r.f.vbar.parentElement.hidden = g.vendor === 'apple';
+      r.f.temp.hidden = r.f.power.hidden = g.vendor === 'apple';
       txt(r.f.temp, g.tempC == null ? '– °C' : `${fmt(g.tempC)} °C`);
       txt(r.f.power, g.powerW == null ? '– W' : `${fmt(g.powerW)} W`);
       const a = avg.get(g.uuid);

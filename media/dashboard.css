@@ -187,6 +187,9 @@ body.vscode-light .card { box-shadow: 0 1px 0 0 #fff inset, 0 12px 30px -22px rg
 
 /* ---- Hero gauges ---- */
 .hero { display: grid; grid-template-columns: 1.35fr repeat(3, 1fr); gap: 6px; align-items: center; }
+.hero.metal { grid-template-columns: 1fr 1fr; max-width: 780px; width: 100%; margin: 0 auto; gap: 24px; }
+.gauge.absolute { border: 1px solid var(--hair-strong); border-radius: 14px; background: var(--surface); }
+.gauge.absolute canvas { display: none; }
 @media (max-width: 900px) { .hero { grid-template-columns: repeat(2, 1fr); } }
 .gauge { position: relative; aspect-ratio: 1 / .86; min-width: 0; }
 .gauge canvas { position: absolute; inset: 0; width: 100%; height: 100%; }

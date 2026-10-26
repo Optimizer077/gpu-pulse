@@ -280,6 +280,20 @@
     if (!s) return;
     const g = currentGpu();
     const hour = state.windows[2];
+    const apple = g?.vendor === 'apple' || (!g && state.vendor === 'apple');
+    $('.hero').classList.toggle('metal', apple);
+    $('#g-vram').parentElement.classList.toggle('absolute', apple);
+    $('#g-temp').parentElement.hidden = apple;
+    $('#g-power').parentElement.hidden = apple;
+    E.readouts.hidden = apple;
+    const chartSeries = gpuChart.opt.series;
+    if (apple && chartSeries.length > 1) {
+      gpuChart.opt.series = chartSeries.filter((s) => s.idx !== 2);
+      gpuChart.requestDraw();
+    } else if (!apple && chartSeries.length === 1) {
+      gpuChart.opt.series = [{ idx: 2, color: 's-vram', glow: 'glow-vram', label: 'VRAM', fill: false }, ...chartSeries];
+      gpuChart.requestDraw();
+    }
     if (g) {
       txt(E['gpu-name'], `${g.name}${gpus().length > 1 ? ` · GPU ${g.index}` : ''}`);
       txt(E.pstate, [g.vendor === 'apple' ? 'Metal · unified memory' : null, g.pstate, g.pcieGen ? `PCIe ${g.pcieGen}.0 x${g.pcieWidth}` : null].filter(Boolean).join(' · '));
@@ -330,7 +344,8 @@
     txt(E['mem-txt'], `${gb(s.mem.usedBytes)} / ${gb(s.mem.totalBytes)} GB · ${mp.toFixed(0)}%`);
 
     const last = state.recent[state.recent.length - 1];
-    html(E['lg-gpu'], legend([['GPU util', 's-gpu', last?.[1]], ['VRAM', 's-vram', last?.[2]]]));
+    html(E['lg-gpu'], legend(apple ? [['GPU util', 's-gpu', last?.[1]]]
+      : [['GPU util', 's-gpu', last?.[1]], ['VRAM', 's-vram', last?.[2]]]));
     html(E['lg-cpu'], legend([['CPU', 's-cpu', last?.[3]], ['RAM', 's-ram', last?.[4]]]));
   }
 
@@ -342,19 +357,20 @@
   function renderWindows(redrawSparks) {
     if (!state.windows.length) return;
     const markup = state.windows.map((w, i) => {
+      const apple = currentGpu()?.vendor === 'apple' || state.vendor === 'apple';
       const has = w.util != null;
       const idle = w.idleShare ?? 0, busy = w.busyShare ?? 0, mid = Math.max(0, 1 - idle - busy);
       return `<div class="win">
         <div class="head"><span>${esc(w.label)}</span><em>${w.coveredMinutes}/${w.minutes} min recorded</em></div>
         <div class="big">${has ? fmt(w.util) : '–'}<small>% avg</small></div>
-        <div class="what">${has ? `peak ${fmt(w.utilPeak)}% · VRAM avg ${fmt(w.vram)}%` : 'no GPU data in this window yet'}</div>
+        <div class="what">${has ? `peak ${fmt(w.utilPeak)}%${apple ? '' : ` · VRAM avg ${fmt(w.vram)}%`}` : 'Collecting GPU history…'}</div>
         <div class="stack" role="img" aria-label="idle ${Math.round(idle * 100)}%, active ${Math.round(mid * 100)}%, busy ${Math.round(busy * 100)}%">
           <div class="idle" style="flex-grow:${idle.toFixed(3)}"></div><div class="mid" style="flex-grow:${mid.toFixed(3)}"></div><div class="busy" style="flex-grow:${busy.toFixed(3)}"></div></div>
         <div class="stack-l"><span>idle ${has ? Math.round(idle * 100) : '–'}%</span><span>busy ${has ? Math.round(busy * 100) : '–'}%</span></div>
         <dl class="kv">
-          <dt>Avg power</dt><dd>${w.power ? `${fmt(w.power)} W` : '–'}</dd>
+          ${apple ? '' : `<dt>Avg power</dt><dd>${w.power ? `${fmt(w.power)} W` : '–'}</dd>
           <dt>Peak temp</dt><dd>${w.tempPeak ? `${fmt(w.tempPeak)} °C` : '–'}</dd>
-          <dt>VRAM held, GPU idle</dt><dd>${w.heldIdleShare != null ? `${Math.round(w.heldIdleShare * 100)}%` : '–'}</dd>
+          <dt>VRAM held, GPU idle</dt><dd>${w.heldIdleShare != null ? `${Math.round(w.heldIdleShare * 100)}%` : '–'}</dd>`}
           <dt>CPU / RAM avg</dt><dd>${fmt(w.cpu)}% / ${fmt(w.mem)}%</dd>
         </dl>
         <canvas class="spark" data-i="${i}" aria-hidden="true"></canvas>
@@ -390,6 +406,9 @@
   }
 
   function renderProcs() {
+    const apple = currentGpu()?.vendor === 'apple' || state.vendor === 'apple';
+    E.procs.closest('.card').hidden = apple;
+    if (apple) return;
     const g = currentGpu();
     const list = state.processes.filter((p) => !g || p.gpuUuid === g.uuid)
       .sort((a, b) => (b.usedMiB ?? -1) - (a.usedMiB ?? -1));
@@ -414,7 +433,9 @@
     const cards = [
       [ICON.cpu, 'Processor', sp.cpu.model, `${sp.cpu.cores} cores · ${sp.cpu.threads} threads${sp.cpu.maxGHz && sp.cpu.maxGHz > (sp.cpu.baseGHz || 0) ? ` · up to ${sp.cpu.maxGHz} GHz` : sp.cpu.baseGHz ? ` · base ${sp.cpu.baseGHz} GHz` : ''}`],
       ...sp.gpus.map((g) => [ICON.gpu, 'Graphics', g.name,
-        [g.vramMiB ? `${(g.vramMiB / 1024).toFixed(0)} GB VRAM` : null, g.driver ? `driver ${g.driver}` : null, g.vbios ? `VBIOS ${g.vbios}` : null].filter(Boolean).join(' · ')]),
+        [g.vramMiB ? `${(g.vramMiB / 1024).toFixed(0)} GB VRAM` : null,
+          ...(g.extra || []).filter((v) => /Metal|unified/i.test(v)),
+          g.driver ? `driver ${g.driver}` : null, g.vbios ? `VBIOS ${g.vbios}` : null].filter(Boolean).join(' · ')]),
       [ICON.mem, 'Memory', `${gb(sp.memory.totalBytes)} GB`, sp.memory.modules.join('\n') || ''],
       ...sp.disks.map((d) => [ICON.disk, 'Storage', d.name, `${(d.sizeBytes / 1e12 >= 1 ? (d.sizeBytes / 1e12).toFixed(1) + ' TB' : (d.sizeBytes / 1e9).toFixed(0) + ' GB')} · ${d.type || ''}`]),
       [ICON.os, 'Operating system', sp.os, `kernel ${sp.kernel} · ${sp.arch}`],

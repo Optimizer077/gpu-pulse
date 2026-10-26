@@ -124,6 +124,8 @@ class RingGauge(Widget):
         self.color, self.glow, self.unit, self.max_value = color, glow, unit, max_value
         self.value = 0.0  # displayed (eased)
         self.target: Optional[float] = None
+        self.numeric_only = False  # absolute readings with no meaningful capacity, e.g. unified GPU allocations
+        self.precision = 0
         self.caption = ""
         self.sub = ""
         self.marker: Optional[float] = None  # 0..1 position of the ◆ (e.g. 1-hour average)
@@ -195,10 +197,12 @@ class RingGauge(Widget):
     @property
     def settled(self) -> bool:
         """True once the boot sweep is over and the displayed value has reached the target."""
-        return time.monotonic() >= self._boot_until and self.value == (self.target or 0.0)
+        return self.numeric_only or (time.monotonic() >= self._boot_until and self.value == (self.target or 0.0))
 
     def step(self, dt: float, shimmer: Optional[float] = None) -> bool:
         """Advance one animation frame; returns True while the value is still moving."""
+        if self.numeric_only:
+            return False
         booting = time.monotonic() < self._boot_until
         goal = self.max_value if booting else (self.target or 0.0)
         diff = goal - self.value
@@ -217,17 +221,33 @@ class RingGauge(Widget):
 
     # ---- change tracking ----
     def _num(self) -> str:
-        return "–" if self.target is None else f"{self.target:.0f}"
+        return "–" if self.target is None else f"{self.target:.{self.precision}f}"
 
     def _frac(self) -> float:
+        if self.numeric_only:
+            return 0.0
         return max(0.0, min(1.0, self.value / self.max_value if self.max_value else 0.0))
 
     def _layout(self, w: int, h: int) -> _RingLayout:
         key: tuple[Any, ...] = (w, h, self.fit_width, self._num(), self.unit, self.caption, self.sub)
-        key += (self.marker, self.side, self.color, self.glow)
+        key += (self.marker, self.side, self.color, self.glow, self.numeric_only)
         if key == self._lay_key:
             return self._lay
         self._lay_key = key
+        if self.numeric_only:
+            big = anim.big_text(self._num())
+            lines: tuple[Line, ...] = ((f"{self._num()} {self.unit}", self.glow, True),)
+            if h >= 6 and max(map(len, big)) + len(self.unit) + 1 <= w:
+                lines = tuple((line, self.glow, True) for line in big[:-1]) + (
+                    (big[-1] + " " + self.unit, self.glow, True),
+                )
+            if h >= len(lines) + 2:
+                lines += ((self.caption, R.INK, False), (self.sub, R.MUTED, False))
+            top = max(0, (h - len(lines)) // 2)
+            absolute_overlay = {top + i: (max(0, (w - len(s)) // 2), s[:w], c, b)
+                                for i, (s, c, b) in enumerate(lines)}
+            self._lay = _RingLayout(meter=False, rw=w, overlay=absolute_overlay)
+            return self._lay
         if h < 3 or w < 8:
             self._lay = _RingLayout(meter=True)
             return self._lay
@@ -268,6 +288,8 @@ class RingGauge(Widget):
 
     def _row_keys(self, w: int, h: int) -> list[Hashable]:
         lay = self._layout(w, h)
+        if self.numeric_only:
+            return [("absolute", lay.overlay.get(y)) for y in range(h)]
         if lay.meter:
             k = ("meter", round(self._frac() * w * 8), self._num(), self.caption, self.sub, self.color, self.glow)
             return [k] * h
@@ -325,6 +347,11 @@ class RingGauge(Widget):
         self.rows_painted += 1
         lay = self._layout(w, h)
         base = self.rich_style
+        if self.numeric_only:
+            col, text, color, bold = lay.overlay.get(y, (0, "", R.INK, False))
+            return Strip([Segment(" " * col), Segment(text, Style(color=color, bold=bold))]).adjust_cell_length(
+                w, base,
+            ).apply_style(base)
         if lay.meter:
             rows = text_strips(self, self._meter(w, h), w)
             strip = rows[y] if y < len(rows) else Strip.blank(w)

@@ -4,6 +4,7 @@ CPU figures are measured on one machine (RTX 5060 Ti, Core Ultra 7 265F, Windows
 
 ## Unreleased
 
+- Mac layouts show GPU activity and absolute shared-memory allocations, hide unavailable GPU sensors and NVIDIA-only panels, and adapt history, alerts and help to available readings.
 - Apple Silicon / Metal support in the terminal dashboard and VS Code extension using unprivileged macOS IORegistry readings.
 - Live GPU utilization, shared GPU allocation, history and job-finished alerts. Unsupported sensors remain unavailable.
 - History preserves missing memory/power/temperature readings through save/reload, merges and CSV exports instead of reporting zero.

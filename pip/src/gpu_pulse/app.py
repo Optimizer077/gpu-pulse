@@ -196,6 +196,10 @@ class GpuDashboard(App[None]):
     def get_default_screen(self) -> Screen:
         return MainScreen(id="_default")
 
+    @property
+    def apple_layout(self) -> bool:
+        return self.mon.vendor == "apple" and not self.mon.cfg.demo
+
     # ---- composition ----
     def compose(self) -> ComposeResult:
         yield TabBar(id="header")
@@ -292,7 +296,8 @@ class GpuDashboard(App[None]):
         self.fleet_width = fleet_width or max(20, w - 4 - (1 if self._overview_scrollbar() else 0))
         self.fleet_lines = fleet_lines(self.n_gpus, self.fleet_width, h)
         fleet_h = self.fleet_lines + 3 if self.fleet_lines else 0
-        L = self.layout_plan = plan(w, h, fleet_h)
+        apple = self.apple_layout
+        L = self.layout_plan = plan(w, h, fleet_h, ring_count=4 if apple else 6)
         fleet_panel = self.query_one("#fleet")
         fleet_panel.display = fleet_h > 0
         if fleet_h:
@@ -305,19 +310,27 @@ class GpuDashboard(App[None]):
         for gauge in self.gauges:
             gauge.styles.height = L.ring_h
             gauge.fit_width = fit
+        self._show("#ring-temp", not apple)
+        self._show("#ring-power", not apple)
+        for pid in ("truth", "truth-g", "truth-d", "gpu-side", "procs"):
+            self._show(f"#{pid}", not apple)
+        self.query_one("#arch").styles.height = 12 if apple else "auto"
         self.query_one("#ov-bottom").styles.height = L.bottom_h
         for pid in ("#usage", "#io"):
             self.query_one(pid).styles.height = L.bottom_h
-        self._show("#ov-arch", not L.compact and L.middle_h >= 16)
-        self.query_one("#ov-mid").styles.height = L.middle_h - (1 if not L.compact and L.middle_h >= 16 else 0)
+        show_arch = not L.compact and (apple or L.middle_h >= 16)
+        self._show("#ov-arch", show_arch)
+        self.query_one("#ov-mid").styles.height = L.middle_h - int(show_arch)
         self._show("#ov-bottom", L.show_bottom)
         self._show("#pulse", L.show_pulse)
         self._show("#ov-left", L.columns >= 2)
         self._show("#ov-center", L.columns == 3)
-        self._show("#truth-r", L.columns < 3)
+        self._show("#truth-r", L.columns < 3 and not apple)
         sys_h = max(16, h - 2 - 16)  # leave room for the MACHINE panel below
         self.query_one("#sys-top").styles.height = sys_h if w >= 100 else 2 * max(14, sys_h // 2)
-        self.query_one("#gpu-bottom").styles.height = max(14, h - 2 - 22) if w >= 100 else 34
+        self.query_one("#gpu-bottom").styles.height = (
+            max(10, h - 2 - 12) if apple else max(14, h - 2 - 22) if w >= 100 else 34
+        )
         card_rows = 1 if w >= 120 else 2 if w >= 60 else 4
         card_h = max(12, min(20, h - 2 - 17)) if card_rows == 1 else 12
         wins = self.query_one("#wins", Grid)
@@ -467,7 +480,7 @@ class GpuDashboard(App[None]):
         self.action_show_tab(ids[(ids.index(self.tab) + step) % len(ids)])
 
     def action_help(self) -> None:
-        self.push_screen(HelpScreen())
+        self.push_screen(HelpScreen(shared_memory=self.apple_layout))
 
     def end_gpu_prefix(self) -> None:
         """Forget a pending ``g``: the next digit switches tabs again."""
@@ -558,7 +571,7 @@ class GpuDashboard(App[None]):
             return
         self._alerts_drawn = version
         panel = self.query_one("#alerts", Panel)
-        panel.update(alerts_list(center, panel.inner_width))
+        panel.update(alerts_list(center, panel.inner_width, shared_memory=self.apple_layout))
 
     def action_export(self) -> None:
         name = f"gpu-pulse-history-{time.strftime('%Y%m%d-%H%M%S')}.csv"

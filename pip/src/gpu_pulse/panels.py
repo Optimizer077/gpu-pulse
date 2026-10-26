@@ -50,7 +50,11 @@ def timeline(series: dict[str, list[Optional[float]]], g: Optional[GpuSample], w
         for label, key, color in (("SM", "sm", R.mix(R.GPU_GLOW, "#ffffff", 0.35)), ("TNS", "tensor", R.TENSOR_GLOW))
         if any(v is not None for v in series.get(key, ()))
     ]
-    extra = [("VRAM", "vram", R.VRAM_GLOW)] + extra
+    apple = g is not None and g.vendor == "apple"
+    if apple:
+        extra = [("GB", "allocation", R.VRAM_GLOW)] + extra
+    elif any(v is not None for v in series.get("vram", ())):
+        extra = [("VRAM", "vram", R.VRAM_GLOW)] + extra
     extra = extra[: max(0, height - 4)]
     chart_h = max(2, height - 1 - len(extra))
     items = [(R.GPU_GLOW, "util", R.fmt(g.util if g else None, 0, "%"))]
@@ -58,9 +62,21 @@ def timeline(series: dict[str, list[Optional[float]]], g: Optional[GpuSample], w
         items.append((R.GPU_GLOW, "SM", R.fmt(g.sm_active, 0, "%")))
     if g is not None and g.tensor_active is not None:
         items.append((R.TENSOR_GLOW, "tensor", R.fmt(g.tensor_active, 0, "%")))
-    items.append((R.VRAM_GLOW, "VRAM", R.fmt(g.vram_pct if g else None, 0, "%")))
+    if apple and g is not None:
+        allocation = g.mem_used_mib / 1024 if g.mem_used_mib is not None else None
+        items.append((R.VRAM_GLOW, "shared", R.fmt(allocation, 1, " GB")))
+    elif g and g.vram_pct is not None:
+        items.append((R.VRAM_GLOW, "VRAM", R.fmt(g.vram_pct, 0, "%")))
     rows: list[RenderableType] = [legend(*items), R.area_chart(series["util"], width, chart_h, R.GPU, R.GPU_GLOW)]
-    rows += [_spark_row(label, series[key], width, color) for label, key, color in extra]
+    for label, key, color in extra:
+        if key == "allocation":
+            values = series.get(key, [])
+            high = max((v for v in values if v is not None), default=1.0)
+            line = Text(" GB ", Style(color=R.MUTED))
+            line.append_text(R.sparkline(values, max(1, width - 4), color, max_v=max(1.0, high)))
+            rows.append(line)
+        else:
+            rows.append(_spark_row(label, series[key], width, color))
     return Group(*rows)
 
 
@@ -214,23 +230,25 @@ def usage_strip(
     return t
 
 
-def window_card(w: WindowStats, cells: Sequence[Optional[float]], width: int, height: int = 10) -> Group:
+def window_card(
+    w: WindowStats, cells: Sequence[Optional[float]], width: int, height: int = 10, shared_memory: bool = False,
+) -> Group:
     big = Text(R.fmt(w.util, 1), Style(color=R.INK, bold=True))
     big.append(" % avg", Style(color=R.MUTED))
     idle, busy = w.idle_share or 0.0, w.busy_share or 0.0
     held = (w.held_idle_share or 0) * 100 if w.held_idle_share is not None else None
     return Group(
         big,
-        Text(f"peak {R.fmt(w.util_peak)}% · VRAM {R.fmt(w.vram)}%", Style(color=R.MUTED), no_wrap=True),
+        Text(f"peak {R.fmt(w.util_peak)}%" + ("" if shared_memory else f" · VRAM {R.fmt(w.vram)}%"),
+             Style(color=R.MUTED), no_wrap=True),
         _stack(w, width),
         Text(f"idle {idle * 100:.0f}%".ljust(max(0, width - 9)) + f"busy {busy * 100:.0f}%", Style(color=R.MUTED)),
-        kv("Avg power", f"{R.fmt(w.power)} W"),
-        kv("Peak temp", f"{R.fmt(w.temp_peak)} °C"),
-        kv("Held idle", f"{R.fmt(held)}%"),
+        *([] if shared_memory else [kv("Avg power", f"{R.fmt(w.power)} W"),
+                                   kv("Peak temp", f"{R.fmt(w.temp_peak)} °C"), kv("Held idle", f"{R.fmt(held)}%")]),
         kv("CPU / RAM", f"{R.fmt(w.cpu)}% / {R.fmt(w.mem)}%"),
         R.sparkline(list(cells), width, R.GPU_GLOW)
         if height <= 10
-        else R.area_chart(list(cells), width, height - 9, R.GPU, R.GPU_GLOW, axis=False),
+        else R.area_chart(list(cells), width, height - (6 if shared_memory else 9), R.GPU, R.GPU_GLOW, axis=False),
         Text(f"{w.covered_minutes}/{w.minutes} min recorded", Style(color=R.DIM)),
     )
 
@@ -351,6 +369,16 @@ def arch_summary(d: Any, g: Optional[GpuSample]) -> Text:
 
 def arch_card(d: Any, g: Optional[GpuSample], width: int) -> Group:
     """Grouped static facts; the PCIe link turns amber when running below its maximum."""
+    if g and g.vendor == "apple":
+        return Group(
+            Text(g.name, Style(color=R.INK, bold=True)),
+            Text("Metal · unified memory", Style(color=R.GPU_GLOW)), Text(),
+            kv("GPU activity", R.fmt(g.util, 0, "%")),
+            kv("GPU allocation", R.fmt(g.mem_used_mib / 1024 if g.mem_used_mib is not None else None, 1, " GB")),
+            Text("GPU allocations share system RAM with the CPU; there is no dedicated VRAM capacity.",
+                 Style(color=R.MUTED)),
+            Text("Activity history and job-finished alerts use GPU utilization.", Style(color=R.MUTED)),
+        )
     lw = 14
     rows: list[RenderableType] = []
     blocks: list[list[RenderableType]] = []

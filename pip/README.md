@@ -26,6 +26,11 @@ and leaves unsupported GPU sensors unavailable. Apple Silicon support is availab
 the source install above; it is not included in the v0.3.0 release files. See [supported hardware](#supported-hardware)
 for the available metrics and shared-memory behavior.
 
+The Mac layout has four Overview cards: GPU activity, allocated GPU memory in GB, CPU and RAM with swap.
+GPU allocation is an absolute number, with no VRAM percentage or capacity ring. Temperature, power, clocks,
+process and NVIDIA GPM panels are hidden. The GPU tab shows Metal facts and useful activity/allocation
+traces, while the History and Diagnosis tabs focus on available readings and job-finished alerts.
+
 ## Commands
 
 | Command | What it does |
